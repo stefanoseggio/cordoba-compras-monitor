@@ -2,7 +2,7 @@ import { log } from 'apify';
 import type { CheerioAPI } from 'cheerio';
 import * as cheerio from 'cheerio';
 import type { Dispatcher } from 'undici';
-import { Agent, fetch as undiciFetch, ProxyAgent } from 'undici';
+import { ProxyAgent } from 'undici';
 
 import { buildPostbackPayload } from './parsers/form.js';
 import { getCurrentPage, hasNextBlockLink, hasPageLink } from './parsers/pagination.js';
@@ -24,36 +24,39 @@ async function sleep(ms: number): Promise<void> {
     });
 }
 
-type FetchResponse = Awaited<ReturnType<typeof undiciFetch>>;
-
-function extractSessionCookie(response: FetchResponse): string | null {
+function extractSessionCookie(response: Response): string | null {
     const raw = response.headers.get('set-cookie');
     if (!raw) return null;
     const match = /ASP\.NET_SessionId=[^;]+/.exec(raw);
     return match ? match[0] : null;
 }
 
-// Uses native fetch(), not Crawlee's got-scraping-based CheerioCrawler -
-// same reasoning as diario-oficial-cl-monitor, though here the driver is
-// different: this is a genuinely STATEFUL sequential postback chain (each
-// page's request body must carry the exact ASP.NET_SessionId + __VIEWSTATE
-// the previous response returned), which doesn't fit Crawlee's
+// Uses Node's global fetch(), not Crawlee's got-scraping-based
+// CheerioCrawler - same reasoning as diario-oficial-cl-monitor, though here
+// the driver is different: this is a genuinely STATEFUL sequential postback
+// chain (each page's request body must carry the exact ASP.NET_SessionId +
+// __VIEWSTATE the previous response returned), which doesn't fit Crawlee's
 // independent-request-queue model naturally.
-// Deliberately uses undici's own fetch()/Agent/ProxyAgent as a matched set,
-// not Node's global fetch() - mixing a standalone `undici` package version
-// with the runtime's built-in fetch (which bundles its own, possibly
-// different, undici internals) throws "invalid onRequestStart method" from
-// deep inside undici's request validation. Verified live 2026-09-04.
+//
+// The `undici` npm dependency here is pinned to EXACTLY the version Node 24
+// bundles internally (`process.versions.undici`), used only for its
+// ProxyAgent class passed as global fetch()'s `dispatcher` option. A
+// mismatched version (the npm registry's latest, one major ahead) throws
+// "invalid onRequestStart method" - global fetch's internal request
+// validation rejects a dispatcher built by a structurally different
+// release. Verified live 2026-09-04. Using global fetch (not undici's own
+// fetch export) also matters for --use-system-ca (see Dockerfile) to take
+// effect - that flag governs Node's own bundled TLS stack.
 async function requestWithRetry(
     init: RequestInit,
-    dispatcher: Dispatcher,
+    dispatcher: Dispatcher | undefined,
     maxRetries = 4,
     baseDelayMs = 1000,
-): Promise<FetchResponse> {
+): Promise<Response> {
     let lastError: Error = new Error('unreachable');
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            const response = await undiciFetch(BASE_URL, { ...init, dispatcher } as Parameters<typeof undiciFetch>[1]);
+            const response = await fetch(BASE_URL, { ...init, ...(dispatcher && { dispatcher }) } as RequestInit);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response;
         } catch (error) {
@@ -76,7 +79,7 @@ async function requestWithRetry(
 // Apify Proxy. Local dev machines with a real Argentina/unblocked network
 // path won't see this - don't mistake "works locally" for "works in the cloud".
 export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise<TenderRow[]> {
-    const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : new Agent();
+    const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
     const results: TenderRow[] = [];
     // Live government data: new tenders can be inserted (sorted first) while
     // this walks pages 1..N, shifting every row behind them by one slot -
@@ -126,7 +129,7 @@ export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise
         const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded' };
         if (cookie) headers.Cookie = cookie;
 
-        let response: FetchResponse;
+        let response: Response;
         try {
             response = await requestWithRetry({ method: 'POST', headers, body, redirect: 'follow' }, dispatcher);
         } catch (error) {
