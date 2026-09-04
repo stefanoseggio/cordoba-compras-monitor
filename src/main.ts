@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 import { Actor, log } from 'apify';
 
 import { fetchTenders } from './fetchTenders.js';
@@ -10,6 +12,12 @@ await run();
 await Actor.exit();
 
 async function run(): Promise<void> {
+    log.info(
+        `DIAG: NODE_EXTRA_CA_CERTS=${process.env.NODE_EXTRA_CA_CERTS ?? '(unset)'} | exists=${
+            process.env.NODE_EXTRA_CA_CERTS ? existsSync(process.env.NODE_EXTRA_CA_CERTS) : 'n/a'
+        } | cwd=${process.cwd()}`,
+    );
+
     const input = (await Actor.getInput<ActorInput>()) ?? ({} as ActorInput);
     const { maxItems = 200, proxyConfiguration: proxyConfigurationInput } = input;
 
