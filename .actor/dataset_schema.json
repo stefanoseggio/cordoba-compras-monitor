@@ -1,0 +1,52 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "actorSpecification": 1,
+    "title": "Dataset Schema",
+    "fields": {
+        "type": "object",
+        "properties": {
+            "nroCotizacion": { "title": "Nro Cotizacion", "type": "string", "description": "Tender process number, e.g. 2026/000091" },
+            "tipoContratacion": { "title": "Tipo Contratacion", "type": "string" },
+            "servicioAdministrativo": { "title": "Servicio Administrativo", "type": "string", "description": "Issuing agency" },
+            "jurisdiccion": { "title": "Jurisdiccion", "type": "string" },
+            "fechaInicio": { "title": "Fecha Inicio", "type": "string" },
+            "fechaFinalizacion": { "title": "Fecha Finalizacion", "type": "string", "description": "Closing/opening date and time" },
+            "estado": { "title": "Estado", "type": "string" },
+            "prorroga": { "title": "Prorroga", "type": "boolean", "description": "Whether the deadline has been extended" },
+            "items": {
+                "title": "Items",
+                "type": "array",
+                "description": "Line items with quantity and reference/official budget, extracted inline - no extra request needed",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "renglon": { "type": "string" },
+                        "cantidad": { "type": "string" },
+                        "precioReferencia": { "type": "string" },
+                        "presupuestoOficial": { "type": "string" }
+                    }
+                }
+            },
+            "telefonoContacto": { "title": "Telefono Contacto", "type": ["string", "null"] },
+            "scrapedAt": { "title": "Scraped at", "type": "string", "description": "ISO timestamp of extraction" }
+        }
+    },
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": ["nroCotizacion", "tipoContratacion", "servicioAdministrativo", "fechaFinalizacion", "estado"]
+            },
+            "display": {
+                "component": "table",
+                "columns": [
+                    { "label": "Nro Cotizacion", "format": "text", "field": "nroCotizacion" },
+                    { "label": "Tipo", "format": "text", "field": "tipoContratacion" },
+                    { "label": "Organismo", "format": "text", "field": "servicioAdministrativo" },
+                    { "label": "Cierre", "format": "text", "field": "fechaFinalizacion" },
+                    { "label": "Estado", "format": "text", "field": "estado" }
+                ]
+            }
+        }
+    }
+}

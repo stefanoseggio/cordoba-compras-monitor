@@ -1,0 +1,15 @@
+{
+    "$schema": "https://apify.com/schemas/v1/input.ide.json",
+    "title": "Cordoba Compras Publicas Monitor Configuration",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "maxItems": {
+            "title": "Max tenders to extract",
+            "type": "integer",
+            "description": "Hard cap on the number of active tenders (licitaciones) returned this run. The source only covers active/open tenders (Licitaciones) - awarded or historical tenders are out of scope for this actor.",
+            "default": 200,
+            "minimum": 1
+        }
+    }
+}
