@@ -66,7 +66,9 @@ const { items } = await client.dataset(run.defaultDatasetId).listItems();
 
 ## Known limitations
 
-- No proxy needed - the source is reachable from a plain datacenter IP.
+- Requires a Residential + Argentina proxy - the source blocks non-Argentina
+  datacenter traffic at the network level. This is handled automatically
+  (the actor defaults to it even if you don't pass `proxyConfiguration`).
 - Only the current, active tender list is available (no historical archive
   browsing was found on this endpoint).
 - Live data changes between requests: the actor deduplicates by

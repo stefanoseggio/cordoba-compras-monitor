@@ -79,6 +79,70 @@ threading (`src/fetchTenders.ts`) does.
    this platform, not a defect in the actor's output. Documented so a
    future session doesn't chase a phantom encoding bug.
 
+## Real bug #6: cloud deployment blocked, twice, by two unrelated issues
+
+**First blocker - network-level block, same as PBA.** The first cloud run
+after everything worked locally failed with `ConnectTimeoutError` at the
+TCP level (10s, both resolved IPs) - `webecommerce.cba.gov.ar` blocks
+non-Argentina/non-residential traffic, same as PBAC. Fixed the same way:
+hardcoded Residential+AR `Actor.createProxyConfiguration()` fallback in
+code (not just an input-schema prefill), same reasoning as
+`pba-tenders-monitor`.
+
+**Second blocker - a real server misconfiguration, much harder to
+diagnose.** Once routed through the proxy, every request failed with
+`unable to verify the first certificate`. This took several wrong turns to
+root-cause properly - worth recording so a future session doesn't repeat
+them:
+
+1. First guess: dispatcher/fetch-library version mismatch. Real and worth
+   fixing (the npm `undici` package installed was 8.10.1 while Node 24
+   bundles 7.29.0 internally - passing a `ProxyAgent` from the mismatched
+   package to Node's global `fetch()` threw a *different* error, "invalid
+   onRequestStart method") - but fixing it did not fix the TLS error.
+2. Second guess: `--use-system-ca` (Node's own suggested flag in the error
+   message). Set via Dockerfile `ENV NODE_OPTIONS`. No effect.
+3. Third guess: switch HTTP client entirely, from fetch()/undici to
+   `https.request()` + `https-proxy-agent` (a more battle-tested pattern
+   for HTTPS-through-HTTPS-proxy in Node). Same exact error persisted -
+   this was the useful negative result: it proved the problem was never
+   about the client library, only about certificates.
+4. Fourth guess: supply `tls.rootCertificates` (Node's exported default
+   root list) plus a manually-extracted extra root cert via the Agent's
+   `ca` option. This *broke local validation that had been working* -
+   `tls.rootCertificates` is not actually equivalent to whatever Node's
+   real default trust does when `ca` is omitted entirely. Reverted.
+5. **Actual root cause**, found via `openssl s_client -showcerts`: the
+   server sends **only its leaf certificate**, not the required
+   intermediate ("Sectigo Public Server Authentication CA OV R36"). This
+   is a genuine misconfiguration on Cordoba's side, not anything wrong
+   locally. A Windows dev machine masks this completely - Windows silently
+   completes the chain from its own cached intermediate, so local
+   `curl`/`fetch()` calls "just worked" all along, which is exactly why
+   this took so long to isolate: the failure only reproduces where there's
+   no such OS-level fallback (the Linux actor container - and, once
+   discovered, locally too, once an explicit `ca` list without the
+   intermediate was forced).
+   Fix: extracted the intermediate + its root directly from a live TLS
+   session (`tls.connect(...).getPeerCertificate(true)`, walking
+   `issuerCertificate`), independently chain-verified with
+   `openssl verify -CAfile root.pem -untrusted intermediate.pem leaf.pem`
+   (result: `leaf.pem: OK`) before trusting it, saved as
+   `certs/cordoba-sectigo-chain.pem`, and loaded via
+   `NODE_EXTRA_CA_CERTS` (Node's real additive mechanism - unlike passing
+   a custom `ca` option to an `Agent`, which *replaces* the default store
+   rather than extending it, confirmed by step 4 above breaking things).
+
+Confirmed working live end-to-end after this: 25+15 tenders across 2 pages
+through the Residential+AR proxy in Apify's cloud.
+
+**Lesson for the next actor:** if a target validates fine locally but
+fails with a certificate error in the cloud (or through a proxy), check
+`openssl s_client -showcerts <host>:443` for the actual wire chain before
+assuming anything about missing roots or client library bugs - a
+Windows/macOS dev machine's OS-level cert store can silently paper over a
+server sending an incomplete chain in a way Linux containers won't.
+
 ## Known scope limits (disclosed, not hidden)
 
 - Only `TIPO_CONSULTA_PUBLICA=LI` (Licitaciones) works on this endpoint -
