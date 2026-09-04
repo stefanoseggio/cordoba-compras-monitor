@@ -155,25 +155,36 @@ server sending an incomplete chain in a way Linux containers won't.
 ## Sibling candidates found via parallel live audit (2026-09-04)
 
 A 6-province parallel audit (Santa Fe, Mendoza, Tucuman, Entre Rios, Salta,
-Neuquen) found at least 3 strong candidates for the next actors:
+Neuquen) found 5 viable candidates and 1 clean reject:
 
-- **Santa Fe**: plain PHP, and better than HTML scraping - a documented
-  JSON AJAX endpoint (`AppAjax.php?a=consultas.getContrataciones`) returns
-  clean structured tender data directly, no HTML parsing needed at all.
+- **Santa Fe** (build first, lowest friction): plain PHP, and better than
+  HTML scraping - a documented JSON AJAX endpoint
+  (`AppAjax.php?a=consultas.getContrataciones`) returns clean structured
+  tender data directly, no HTML parsing needed at all.
 - **Tucuman**: plain PHP, GET-querystring pagination (`?pagina_actual=N`),
-  no postback/ViewState at all - simplest of the three. Note: backend is
-  PHP 4.4.2 (circa 2006) and serves `ISO-8859-1`, not UTF-8 - handle the
-  encoding explicitly when building this one.
-- **Mendoza**: runs COMPR.AR (same national platform that killed an
-  earlier candidate). DevExpress/UpdatePanel/ScriptManager markers ARE
-  present, but only in peripheral filter widgets - a plain POST to the
-  results-grid button (`ctl00$CPH1$btnListarPliegoAvanzado`) returns a full
-  classic `<table>` GridView (not `ASPxGridView`) with real data, no
-  callback needed. Real unresolved question before building: the grid's
-  own pagination mechanism (likely `__EVENTARGUMENT="Page$N"`) wasn't
-  confirmed live - do that before writing schema/code, same discipline as
-  always.
+  no postback/ViewState at all. Note: backend is PHP 4.4.2 (circa 2006)
+  and serves `ISO-8859-1`, not UTF-8 - handle the encoding explicitly.
+- **Entre Rios**: plain PHP, zero DevExpress/AJAX markers, largest
+  confirmed dataset of the batch (2042+ rows).
+- **Salta**: Apache/HTML server-rendered, real data in the initial page
+  load, zero DevExpress/SPA markers.
+- **Mendoza** (viable but the most fragile of the five, build last):
+  runs COMPR.AR (same national platform that killed an earlier
+  candidate). DevExpress/UpdatePanel/ScriptManager markers ARE present,
+  but only in peripheral filter widgets - a plain POST to the
+  results-grid button (`ctl00$CPH1$btnListarPliegoAvanzado`) returns a
+  full classic `<table>` GridView (not `ASPxGridView`) with real data, no
+  callback needed. The grid's own pagination mechanism (likely
+  `__EVENTARGUMENT="Page$N"`) was NOT confirmed live - do that before
+  writing schema/code.
+- **Neuquen - REJECTED**: the obvious URL resets the TLS connection
+  outright; the real portal (CO.DI.NEU) returns 200 but the actual data
+  grid depends on a GeneXus AJAX+WebSocket protocol tied to session state,
+  not reproducible with plain fetch/cheerio without full reverse
+  engineering - outside the low-risk standard this portfolio targets.
 
-Full audit notes (all 6 provinces) are in this session's workflow journal,
-not yet copied into a repo - re-run/re-derive before starting the next
-actor rather than trusting this summary alone.
+Full audit notes (all 6 provinces, full technical detail per candidate)
+are in this session's workflow journal, not yet copied into a repo -
+re-run/re-derive (or re-audit fresh, since these are time-sensitive live
+findings) before starting the next actor rather than trusting this
+summary alone.
