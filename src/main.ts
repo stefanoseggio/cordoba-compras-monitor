@@ -11,11 +11,22 @@ await Actor.exit();
 
 async function run(): Promise<void> {
     const input = (await Actor.getInput<ActorInput>()) ?? ({} as ActorInput);
-    const { maxItems = 200 } = input;
+    const { maxItems = 200, proxyConfiguration: proxyConfigurationInput } = input;
+
+    // Verified live 2026-09-04: Apify's cloud IPs get ConnectTimeoutError
+    // against this source (TCP-level block), same pattern as
+    // pba-tenders-monitor's PBAC target. Hardcoding the fallback here, not
+    // just as an input-schema prefill, is deliberate - a prefill only helps
+    // Console users; API/CLI callers who omit the field entirely would
+    // otherwise get no proxy and silently fail in the cloud.
+    const proxyConfiguration = await Actor.createProxyConfiguration(
+        proxyConfigurationInput ?? { groups: ['RESIDENTIAL'], countryCode: 'AR' },
+    );
+    const proxyUrl = await proxyConfiguration?.newUrl();
 
     let tenders;
     try {
-        tenders = await fetchTenders(maxItems);
+        tenders = await fetchTenders(maxItems, proxyUrl);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const cause = error instanceof Error && error.cause ? String(error.cause) : null;

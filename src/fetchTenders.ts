@@ -1,6 +1,8 @@
 import { log } from 'apify';
 import type { CheerioAPI } from 'cheerio';
 import * as cheerio from 'cheerio';
+import type { Dispatcher } from 'undici';
+import { Agent, fetch as undiciFetch, ProxyAgent } from 'undici';
 
 import { buildPostbackPayload } from './parsers/form.js';
 import { getCurrentPage, hasNextBlockLink, hasPageLink } from './parsers/pagination.js';
@@ -22,7 +24,9 @@ async function sleep(ms: number): Promise<void> {
     });
 }
 
-function extractSessionCookie(response: Response): string | null {
+type FetchResponse = Awaited<ReturnType<typeof undiciFetch>>;
+
+function extractSessionCookie(response: FetchResponse): string | null {
     const raw = response.headers.get('set-cookie');
     if (!raw) return null;
     const match = /ASP\.NET_SessionId=[^;]+/.exec(raw);
@@ -35,11 +39,21 @@ function extractSessionCookie(response: Response): string | null {
 // page's request body must carry the exact ASP.NET_SessionId + __VIEWSTATE
 // the previous response returned), which doesn't fit Crawlee's
 // independent-request-queue model naturally.
-async function requestWithRetry(init: RequestInit, maxRetries = 4, baseDelayMs = 1000): Promise<Response> {
+// Deliberately uses undici's own fetch()/Agent/ProxyAgent as a matched set,
+// not Node's global fetch() - mixing a standalone `undici` package version
+// with the runtime's built-in fetch (which bundles its own, possibly
+// different, undici internals) throws "invalid onRequestStart method" from
+// deep inside undici's request validation. Verified live 2026-09-04.
+async function requestWithRetry(
+    init: RequestInit,
+    dispatcher: Dispatcher,
+    maxRetries = 4,
+    baseDelayMs = 1000,
+): Promise<FetchResponse> {
     let lastError: Error = new Error('unreachable');
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(BASE_URL, init);
+            const response = await undiciFetch(BASE_URL, { ...init, dispatcher } as Parameters<typeof undiciFetch>[1]);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response;
         } catch (error) {
@@ -54,7 +68,15 @@ async function requestWithRetry(init: RequestInit, maxRetries = 4, baseDelayMs =
     throw lastError;
 }
 
-export async function fetchTenders(maxItems: number): Promise<TenderRow[]> {
+// Verified live 2026-09-04: from Apify's cloud (a non-Argentina datacenter
+// IP), every request to webecommerce.cba.gov.ar times out at the TCP
+// connect stage (ConnectTimeoutError against both resolved IPs, 10s each) -
+// this is a network-level block, not an application error. Same pattern as
+// pba-tenders-monitor's PBAC target; the fix is the same: Residential+AR
+// Apify Proxy. Local dev machines with a real Argentina/unblocked network
+// path won't see this - don't mistake "works locally" for "works in the cloud".
+export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise<TenderRow[]> {
+    const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : new Agent();
     const results: TenderRow[] = [];
     // Live government data: new tenders can be inserted (sorted first) while
     // this walks pages 1..N, shifting every row behind them by one slot -
@@ -74,7 +96,7 @@ export async function fetchTenders(maxItems: number): Promise<TenderRow[]> {
         }
     }
 
-    const initialResponse = await requestWithRetry({ redirect: 'follow' });
+    const initialResponse = await requestWithRetry({ redirect: 'follow' }, dispatcher);
     let cookie = extractSessionCookie(initialResponse);
     let html = await initialResponse.text();
     let $: CheerioAPI = cheerio.load(html);
@@ -104,9 +126,9 @@ export async function fetchTenders(maxItems: number): Promise<TenderRow[]> {
         const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded' };
         if (cookie) headers.Cookie = cookie;
 
-        let response: Response;
+        let response: FetchResponse;
         try {
-            response = await requestWithRetry({ method: 'POST', headers, body, redirect: 'follow' });
+            response = await requestWithRetry({ method: 'POST', headers, body, redirect: 'follow' }, dispatcher);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log.warning(`Fallo al pedir la pagina ${nextPage} tras reintentos: ${message}. Devolviendo lo acumulado.`);

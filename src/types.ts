@@ -1,5 +1,10 @@
 export interface ActorInput {
     maxItems: number;
+    proxyConfiguration?: {
+        useApifyProxy?: boolean;
+        apifyProxyGroups?: string[];
+        apifyProxyCountry?: string;
+    };
 }
 
 export interface TenderItem {

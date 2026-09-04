@@ -10,6 +10,13 @@
             "description": "Hard cap on the number of active tenders (licitaciones) returned this run. The source only covers active/open tenders (Licitaciones) - awarded or historical tenders are out of scope for this actor.",
             "default": 200,
             "minimum": 1
+        },
+        "proxyConfiguration": {
+            "title": "Proxy configuration",
+            "type": "object",
+            "description": "Required: webecommerce.cba.gov.ar blocks non-residential-Argentina traffic from the cloud (verified live - ConnectTimeoutError from Apify's datacenter IPs). Defaults to Residential + Argentina; do not switch to datacenter.",
+            "prefill": { "useApifyProxy": true, "apifyProxyGroups": ["RESIDENTIAL"], "apifyProxyCountry": "AR" },
+            "editor": "proxy"
         }
     }
 }
