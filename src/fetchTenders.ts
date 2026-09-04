@@ -44,6 +44,8 @@ async function requestWithRetry(init: RequestInit, maxRetries = 4, baseDelayMs =
             return response;
         } catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error));
+            const cause = lastError.cause ? ` | cause: ${String(lastError.cause)}` : '';
+            log.warning(`Intento ${attempt + 1}/${maxRetries + 1} fallo: ${lastError.message}${cause}`);
             if (attempt < maxRetries) {
                 await sleep(baseDelayMs * 2 ** attempt);
             }

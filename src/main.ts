@@ -18,8 +18,9 @@ async function run(): Promise<void> {
         tenders = await fetchTenders(maxItems);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        log.error(`Fallo la extraccion: ${message}`);
-        await Actor.pushData({ error: message, scrapedAt: new Date().toISOString() });
+        const cause = error instanceof Error && error.cause ? String(error.cause) : null;
+        log.error(`Fallo la extraccion: ${message}${cause ? ` | cause: ${cause}` : ''}`);
+        await Actor.pushData({ error: message, cause, scrapedAt: new Date().toISOString() });
         return;
     }
 
