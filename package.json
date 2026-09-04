@@ -9,7 +9,7 @@
   "dependencies": {
     "apify": "^3.7.0",
     "cheerio": "1.0.0-rc.12",
-    "undici": "7.29.0"
+    "https-proxy-agent": "^9.1.0"
   },
   "devDependencies": {
     "@apify/eslint-config": "^2.0.0",

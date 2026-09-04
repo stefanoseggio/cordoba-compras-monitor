@@ -1,8 +1,9 @@
+import * as https from 'node:https';
+
 import { log } from 'apify';
 import type { CheerioAPI } from 'cheerio';
 import * as cheerio from 'cheerio';
-import type { Dispatcher } from 'undici';
-import { ProxyAgent } from 'undici';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 import { buildPostbackPayload } from './parsers/form.js';
 import { getCurrentPage, hasNextBlockLink, hasPageLink } from './parsers/pagination.js';
@@ -24,44 +25,78 @@ async function sleep(ms: number): Promise<void> {
     });
 }
 
-function extractSessionCookie(response: Response): string | null {
-    const raw = response.headers.get('set-cookie');
+interface SimpleResponse {
+    ok: boolean;
+    status: number;
+    getHeader(name: string): string | null;
+    text(): Promise<string>;
+}
+
+interface RequestOptions {
+    method?: 'GET' | 'POST';
+    headers?: Record<string, string>;
+    body?: string;
+    agent?: https.Agent;
+}
+
+// Deliberately uses Node's classic https.request() + https-proxy-agent
+// rather than fetch()/undici's ProxyAgent - both fetch paths tried first
+// (Node's global fetch with a mismatched undici npm package, and undici's
+// own fetch export) failed live: the former threw "invalid onRequestStart
+// method" (the npm undici package was a major version ahead of the 7.29.0
+// Node 24 bundles internally - passing a dispatcher built by a
+// structurally different release), and pinning the exact version fixed
+// that but not the actual goal - a subsequent TLS chain-validation error
+// through the proxy persisted regardless of --use-system-ca. https-proxy-agent
+// is a far more battle-tested pattern for exactly "Node app tunnels HTTPS
+// through an HTTPS proxy" and had none of these issues. Verified live
+// 2026-09-04.
+async function doRequest(options: RequestOptions): Promise<SimpleResponse> {
+    return new Promise((resolve, reject) => {
+        const req = https.request(
+            BASE_URL,
+            { method: options.method ?? 'GET', headers: options.headers, agent: options.agent },
+            (res) => {
+                const chunks: Buffer[] = [];
+                res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                res.on('end', () => {
+                    const status = res.statusCode ?? 0;
+                    resolve({
+                        ok: status >= 200 && status < 300,
+                        status,
+                        getHeader: (name) => {
+                            const value = res.headers[name.toLowerCase()];
+                            if (Array.isArray(value)) return value.join(', ');
+                            return value ?? null;
+                        },
+                        text: async () => Buffer.concat(chunks).toString('utf-8'),
+                    });
+                });
+            },
+        );
+        req.on('error', reject);
+        if (options.body) req.write(options.body);
+        req.end();
+    });
+}
+
+function extractSessionCookie(response: SimpleResponse): string | null {
+    const raw = response.getHeader('set-cookie');
     if (!raw) return null;
     const match = /ASP\.NET_SessionId=[^;]+/.exec(raw);
     return match ? match[0] : null;
 }
 
-// Uses Node's global fetch(), not Crawlee's got-scraping-based
-// CheerioCrawler - same reasoning as diario-oficial-cl-monitor, though here
-// the driver is different: this is a genuinely STATEFUL sequential postback
-// chain (each page's request body must carry the exact ASP.NET_SessionId +
-// __VIEWSTATE the previous response returned), which doesn't fit Crawlee's
-// independent-request-queue model naturally.
-//
-// The `undici` npm dependency here is pinned to EXACTLY the version Node 24
-// bundles internally (`process.versions.undici`), used only for its
-// ProxyAgent class passed as global fetch()'s `dispatcher` option. A
-// mismatched version (the npm registry's latest, one major ahead) throws
-// "invalid onRequestStart method" - global fetch's internal request
-// validation rejects a dispatcher built by a structurally different
-// release. Verified live 2026-09-04. Using global fetch (not undici's own
-// fetch export) also matters for --use-system-ca (see Dockerfile) to take
-// effect - that flag governs Node's own bundled TLS stack.
-async function requestWithRetry(
-    init: RequestInit,
-    dispatcher: Dispatcher | undefined,
-    maxRetries = 4,
-    baseDelayMs = 1000,
-): Promise<Response> {
+async function requestWithRetry(options: RequestOptions, maxRetries = 4, baseDelayMs = 1000): Promise<SimpleResponse> {
     let lastError: Error = new Error('unreachable');
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(BASE_URL, { ...init, ...(dispatcher && { dispatcher }) } as RequestInit);
+            const response = await doRequest(options);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response;
         } catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error));
-            const cause = lastError.cause ? ` | cause: ${String(lastError.cause)}` : '';
+            const cause = 'cause' in lastError && lastError.cause ? ` | cause: ${String(lastError.cause)}` : '';
             log.warning(`Intento ${attempt + 1}/${maxRetries + 1} fallo: ${lastError.message}${cause}`);
             if (attempt < maxRetries) {
                 await sleep(baseDelayMs * 2 ** attempt);
@@ -79,7 +114,7 @@ async function requestWithRetry(
 // Apify Proxy. Local dev machines with a real Argentina/unblocked network
 // path won't see this - don't mistake "works locally" for "works in the cloud".
 export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise<TenderRow[]> {
-    const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+    const agent = proxyUrl ? (new HttpsProxyAgent(proxyUrl) as unknown as https.Agent) : undefined;
     const results: TenderRow[] = [];
     // Live government data: new tenders can be inserted (sorted first) while
     // this walks pages 1..N, shifting every row behind them by one slot -
@@ -99,7 +134,7 @@ export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise
         }
     }
 
-    const initialResponse = await requestWithRetry({ redirect: 'follow' }, dispatcher);
+    const initialResponse = await requestWithRetry({ agent });
     let cookie = extractSessionCookie(initialResponse);
     let html = await initialResponse.text();
     let $: CheerioAPI = cheerio.load(html);
@@ -126,12 +161,15 @@ export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise
 
         const payload = buildPostbackPayload($, eventTarget);
         const body = new URLSearchParams(payload).toString();
-        const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded' };
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Length': String(Buffer.byteLength(body)),
+        };
         if (cookie) headers.Cookie = cookie;
 
-        let response: Response;
+        let response: SimpleResponse;
         try {
-            response = await requestWithRetry({ method: 'POST', headers, body, redirect: 'follow' }, dispatcher);
+            response = await requestWithRetry({ method: 'POST', headers, body, agent });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log.warning(`Fallo al pedir la pagina ${nextPage} tras reintentos: ${message}. Devolviendo lo acumulado.`);
