@@ -31,11 +31,15 @@ COPY --from=builder --chown=myuser:myuser /usr/src/app/dist ./dist
 COPY --chown=myuser:myuser . ./
 
 # webecommerce.cba.gov.ar's TLS chain leads to a relatively new Sectigo root
-# (issued 2021) not present in every bundled Node CA list - verified live
-# 2026-09-04 (UNABLE_TO_VERIFY_FIRST_CERTIFICATE through Apify Proxy in the
-# cloud, while the same chain validates fine on a Windows dev machine via
-# OS-level cert bridging). --use-system-ca makes Node also consult the
-# container OS's own ca-certificates store, which is more current.
-ENV NODE_OPTIONS=--use-system-ca
+# (issued 2021) not present in this container's Node CA trust - verified
+# live 2026-09-04 (UNABLE_TO_VERIFY_FIRST_CERTIFICATE, reproduced with two
+# independent HTTP clients and unaffected by --use-system-ca). certs/cordoba-sectigo-root-r46.pem
+# was extracted directly from the server's own presented chain.
+# NODE_EXTRA_CA_CERTS additively extends Node's default trust store with it
+# (unlike passing a custom `ca` option to an Agent, which REPLACES the
+# default store - tls.rootCertificates is not a usable substitute for that
+# default, confirmed live: using it alone broke validation that omitting
+# `ca` entirely does not).
+ENV NODE_EXTRA_CA_CERTS=/usr/src/app/certs/cordoba-sectigo-root-r46.pem
 
 CMD ["node", "dist/main.js"]

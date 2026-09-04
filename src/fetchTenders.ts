@@ -114,6 +114,13 @@ async function requestWithRetry(options: RequestOptions, maxRetries = 4, baseDel
 // Apify Proxy. Local dev machines with a real Argentina/unblocked network
 // path won't see this - don't mistake "works locally" for "works in the cloud".
 export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise<TenderRow[]> {
+    // No explicit `ca` option here on purpose: passing tls.rootCertificates
+    // (Node's exported "default" list) turned out NOT to be equivalent to
+    // Node's real default trust store and broke validation locally where
+    // omitting `ca` entirely works fine - verified live 2026-09-04. The
+    // actual fix for the source's newer Sectigo root not being trusted in
+    // the cloud container is NODE_EXTRA_CA_CERTS (see Dockerfile), which
+    // additively extends the default store instead of replacing it.
     const agent = proxyUrl ? (new HttpsProxyAgent(proxyUrl) as unknown as https.Agent) : undefined;
     const results: TenderRow[] = [];
     // Live government data: new tenders can be inserted (sorted first) while
