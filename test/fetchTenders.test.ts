@@ -14,7 +14,7 @@ describe.skipIf(process.env.CI)('live fetchTenders against the real Cordoba port
         expect(tenders.length).toBeGreaterThan(25); // proves pagination actually advanced past page 1
         for (const t of tenders) {
             expect(t.nroCotizacion).toMatch(/^\d{4}\/\d+$/);
-            expect(t.scrapedAt).toBeTruthy();
+            expect(t.fechaInicio).toBeTruthy();
         }
 
         const ids = tenders.map((t) => t.nroCotizacion);

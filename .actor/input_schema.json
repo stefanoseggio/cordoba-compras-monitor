@@ -17,6 +17,20 @@
             "description": "Required: webecommerce.cba.gov.ar blocks non-residential-Argentina traffic from the cloud (verified live - ConnectTimeoutError from Apify's datacenter IPs). Defaults to Residential + Argentina; do not switch to datacenter.",
             "prefill": { "useApifyProxy": true, "apifyProxyGroups": ["RESIDENTIAL"], "apifyProxyCountry": "AR" },
             "editor": "proxy"
+        },
+        "onlyNew": {
+            "title": "Delta mode - only new tenders since last run",
+            "type": "boolean",
+            "description": "When enabled, persists which tender ids (nroCotizacion) this actor has already returned, in its own named key-value store that survives between scheduled runs, and returns only tenders not seen in a prior run. IMPORTANT: this source's listing is NOT reliably sorted newest-first end to end (verified live - a real tender can appear out of order relative to both its own Fecha Inicio and its own nroCotizacion, within the very first page), so onlyNew filters AFTER a full fetch (up to maxItems) rather than stopping pagination early like this fleet's other delta-enabled actors. It is correct, just not a pagination-cost optimization. Independent of dateRange. Recommended for recurring monitoring; leave off for a full one-off extraction.",
+            "default": false
+        },
+        "dateRange": {
+            "title": "Filter by recency (Fecha Inicio)",
+            "type": "string",
+            "description": "Optionally restrict results to tenders whose Fecha Inicio (publication date) falls within this window. Independent of onlyNew - this is the source's own declared publication timestamp, not independently cross-verified against when a tender actually first appeared on the portal.",
+            "editor": "select",
+            "enum": ["24h", "7d", "30d"],
+            "enumTitles": ["Last 24 hours", "Last 7 days", "Last 30 days"]
         }
     }
 }

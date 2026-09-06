@@ -10,7 +10,15 @@ import { getCurrentPage, hasNextBlockLink, hasPageLink } from './parsers/paginat
 import { parseGrid } from './parsers/table.js';
 import type { TenderRow } from './types.js';
 
-const BASE_URL = 'https://webecommerce.cba.gov.ar/VistaPublica/ConsultaPublicaCotizacion.aspx?TIPO_CONSULTA_PUBLICA=LI';
+// Exported for the delta layer's `source_url` envelope field - this portal
+// has no stable per-record deep link (every "Ver Detalles"/"Preguntas"
+// control is an ASP.NET postback tied to the current session/ViewState, not
+// a real URL - verified against the fixtures, no plain <a href> exists for
+// any individual tender), so every record's `source_url` points to this
+// same general listing page rather than a record-specific one. Disclosed in
+// README/AGENTS.md, not silently papered over.
+export const BASE_URL =
+    'https://webecommerce.cba.gov.ar/VistaPublica/ConsultaPublicaCotizacion.aspx?TIPO_CONSULTA_PUBLICA=LI';
 
 // The pager only ever renders an 11-slot window (paglb1..paglb11) - real
 // data on the audit date ended at page 8 with 3 trailing empty slots, so

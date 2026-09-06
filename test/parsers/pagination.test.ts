@@ -36,7 +36,9 @@ describe('hasPageLink', () => {
         // hasPageLink must not be fooled by that into a false positive at a page
         // number the main grid doesn't actually have a link for.
         expect(hasPageLink($, 2)).toBe(true); // real link, exists on the bare grid too
-        expect($('[id="PopUpRubroProvNoMasterSoloPadres_PopUpRubroProvNoMasterSoloPadres_paglb2"]').length).toBeGreaterThan(0); // sanity: popup's own (differently prefixed) id is present
+        expect(
+            $('[id="PopUpRubroProvNoMasterSoloPadres_PopUpRubroProvNoMasterSoloPadres_paglb2"]').length,
+        ).toBeGreaterThan(0); // sanity: popup's own (differently prefixed) id is present
     });
 
     it('page 9 (captured once the dataset grew past the original 11-slot window) still links to 10 and 11 inside the window', () => {

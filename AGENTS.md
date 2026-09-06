@@ -18,7 +18,7 @@ No Crawlee dependency - same reasoning as `diario-oficial-cl-monitor`, but
 for a different underlying cause: this is a genuinely **stateful sequential
 postback chain**, not a queue of independent requests. Each page's POST body
 must carry the exact `ASP.NET_SessionId` cookie and `__VIEWSTATE` the
-*previous* response returned. Crawlee's `CheerioCrawler` models an
+_previous_ response returned. Crawlee's `CheerioCrawler` models an
 independent-request queue (`enqueueLinks`), which doesn't fit this shape
 naturally - a plain sequential `for` loop with manual cookie/viewstate
 threading (`src/fetchTenders.ts`) does.
@@ -34,7 +34,7 @@ threading (`src/fetchTenders.ts`) does.
   `hasNextBlockLink($)` checks for the "siguiente bloque" control
   (`id="paglbS"`) needed once past the pager's 11-slot sliding window.
 - `src/parsers/table.ts` - `parseGrid($)` extracts rows from `#gv > tbody >
-  tr` (cheerio, like a real browser, auto-inserts `<tbody>` - a bare
+tr` (cheerio, like a real browser, auto-inserts `<tbody>` - a bare
   `.children('tr')` on the table itself silently matches nothing).
 - `src/fetchTenders.ts` - drives the whole session: GET page 1, then loop
   POSTing `paglb{N}` (or `paglbS` past the window edge), forwarding cookies,
@@ -72,7 +72,7 @@ threading (`src/fetchTenders.ts`) does.
    needing a stable cursor the source doesn't offer.
 5. **False alarm, not a bug:** stored dataset values initially looked
    mojibake'd (`LicitaciÃ³n`) when inspected via `cat file |
-   python -m json.tool` in this Windows/Git-Bash environment. Verified with
+python -m json.tool` in this Windows/Git-Bash environment. Verified with
    Node (`fs.readFileSync(..., 'utf-8')`) that the file's actual bytes are
    correct UTF-8 (`Licitación`, `RÍO CUARTO` render perfectly) - the
    mis-rendering was `python -m json.tool`'s own stdin-decoding default on
@@ -98,7 +98,7 @@ them:
 1. First guess: dispatcher/fetch-library version mismatch. Real and worth
    fixing (the npm `undici` package installed was 8.10.1 while Node 24
    bundles 7.29.0 internally - passing a `ProxyAgent` from the mismatched
-   package to Node's global `fetch()` threw a *different* error, "invalid
+   package to Node's global `fetch()` threw a _different_ error, "invalid
    onRequestStart method") - but fixing it did not fix the TLS error.
 2. Second guess: `--use-system-ca` (Node's own suggested flag in the error
    message). Set via Dockerfile `ENV NODE_OPTIONS`. No effect.
@@ -109,7 +109,7 @@ them:
    about the client library, only about certificates.
 4. Fourth guess: supply `tls.rootCertificates` (Node's exported default
    root list) plus a manually-extracted extra root cert via the Agent's
-   `ca` option. This *broke local validation that had been working* -
+   `ca` option. This _broke local validation that had been working_ -
    `tls.rootCertificates` is not actually equivalent to whatever Node's
    real default trust does when `ca` is omitted entirely. Reverted.
 5. **Actual root cause**, found via `openssl s_client -showcerts`: the
@@ -130,7 +130,7 @@ them:
    (result: `leaf.pem: OK`) before trusting it, saved as
    `certs/cordoba-sectigo-chain.pem`, and loaded via
    `NODE_EXTRA_CA_CERTS` (Node's real additive mechanism - unlike passing
-   a custom `ca` option to an `Agent`, which *replaces* the default store
+   a custom `ca` option to an `Agent`, which _replaces_ the default store
    rather than extending it, confirmed by step 4 above breaking things).
 
 Confirmed working live end-to-end after this: 25+15 tenders across 2 pages
@@ -142,6 +142,110 @@ fails with a certificate error in the cloud (or through a proxy), check
 assuming anything about missing roots or client library bugs - a
 Windows/macOS dev machine's OS-level cert store can silently paper over a
 server sending an incomplete chain in a way Linux containers won't.
+
+## Delta engine (2026-09-06 retrofit)
+
+Added `onlyNew`/`dateRange` input plus the standardized B2B output envelope
+(`record_id`, `event_type`, `scraped_at`, `is_new`, `source_url`) that this
+portfolio's fleet now ships across every actor, matching the contract
+shipped and cloud-verified on `uk-hse-enforcement-monitor`. `fetchTenders.ts`
+and the parsers above are **untouched** by this retrofit - the delta layer
+is a pure post-processing step on top of the existing fetch, not a rewrite
+of the pagination logic.
+
+- **The critical decision: safe post-filter, not early-stop pagination.**
+  HSE's delta engine stops pagination after 2 consecutive pages of no-new
+  ids, because both its registers are genuinely, verifiably sorted
+  newest-first. Cordoba's is not - live-verified two ways before writing any
+  code:
+    1. `test/fixtures/page1.html` (a real, unmodified capture from
+       2026-09-04) already shows the anomaly in its own top 25 rows: tender
+       `2026/000033` (published 24/08/2026 09:57) sits at position 14,
+       sandwiched between `2026/000075` (27/08) and `2026/000074`/`2026/000032`
+       (both 24/08) - neither `fechaInicio` order nor `nroCotizacion` order
+       explains that position. `2026/000084` (31/08) shows the same pattern,
+       appearing after a run of 28/08-dated rows.
+    2. Re-fetched the live page directly (`curl`, no proxy needed from this
+       dev machine - see Known scope limits) on 2026-09-06, two days later:
+       byte-identical row order to the fixture, same anomalies in the same
+       positions. Not a one-off glitch; the sort key genuinely isn't a stable
+       function of either displayed date field or the tender number.
+
+    The likely explanation (not confirmed, not needed to be for the decision):
+    the site probably sorts by an internal last-modified/touched id rather
+    than `Fecha Inicio`, and something about tenders `000033`/`000084`
+    specifically (an edit? a `prorroga`?) touched them more recently than
+    their nominal publish date suggests. Whatever the cause, "N consecutive
+    pages with no new ids" is not a safe stopping signal here - a genuinely
+    new tender could in principle land past that cutoff. So `onlyNew` fetches
+    everything up to `maxItems` exactly as a normal run does (unchanged
+    `fetchTenders` call), then `src/deltaEngine.ts` filters the complete
+    result set afterward. Correct, not a pagination-cost optimization -
+    disclosed as such in the input schema and README, not silently shipped as
+    if it were the fast path.
+
+- `record_id` = `nroCotizacion` verbatim (already the natural unique id,
+  e.g. `2026/000091`) - no hashing, matching the spec.
+- `event_type` is always `NEW_LISTING`. Unlike HSE's convictions/notices
+  split (`SANCTION` vs `NEW_LISTING`, a real domain distinction - a
+  conviction inherently **is** an imposed sanction), a procurement tender
+  has no comparably specific, defensible sub-type: every genuinely-new row
+  is just a new listing appearing in the active-tenders grid. Inventing a
+  finer-grained enum here would be arbitrary, not domain-driven.
+- `source_url` is the same `BASE_URL` constant for every record, not a
+  per-tender deep link. Checked the real markup for one before deciding
+  this: every "Ver Detalles"/"Preguntas" control in the Acciones cell is
+  `javascript:WebForm_DoPostBackWithOptions(...)` - an ASP.NET postback tied
+  to the current session/ViewState, not a plain `<a href>`. This portal
+  simply has no stateless, shareable URL for an individual tender (same
+  postback-chain nature documented in Architecture above). Disclosed in
+  README's Known limitations rather than fabricating a URL shape that
+  wouldn't actually resolve to anything for a fresh visitor.
+- `src/state.ts` opens a **named** key-value store
+  (`cordoba-compras-monitor-delta-state`), not the run's default one, so
+  state survives between scheduled runs - default KV stores are isolated
+  per run and would defeat the entire point. Only one sub-dataset here
+  (licitaciones), so state is a flat `{ seenIds: string[], lastRunAt:
+string }` rather than HSE's per-dataset `Record`. Capped at 5000 ids,
+  newest-first (this run's ids are prepended ahead of whatever survives from
+  the previous state) - comfortably above this source's whole active-tender
+  count (~90-125 observed live) many times over.
+- `is_new` is computed from the seen-set regardless of `onlyNew`, so a full
+  non-delta run still tells the consumer which of its results are new -
+  verified by a dedicated test (`test/deltaEngine.test.ts`) rather than
+  just asserted.
+- `dateRange` filters on `fechaInicio` via `src/dateFilter.ts`'s
+  `parseFechaInicio` (`DD/MM/YYYY HH:mm:ss`, Argentina local time). Argentina
+  Time has been a fixed UTC-3 with no daylight saving since 2009, so unlike
+  HSE's UK-date approximation (which treats GMT/BST both as UTC and
+  discloses the imprecision), converting ART to a true UTC instant here is
+  an exact fixed offset - no reason not to do it correctly. This field
+  itself looks trustworthy as a per-record timestamp (nothing here suggests
+  it lags real publication the way HSE's Offence Date does) - it's the
+  listing's own **sort order** that's unreliable, a distinct and narrower
+  claim than "the date field is wrong", and worth not conflating with it in
+  the docs.
+- Tests (`test/dateFilter.test.ts`, `test/deltaEngine.test.ts`,
+  `test/state.test.ts`) are all pure unit tests against real fixture data
+  (`test/fixtures/page1.html`, parsed with the existing `parseGrid`) or
+  synthetic id lists for `mergeSeenIds` - no network mocking needed, since
+  (unlike HSE's separate listing/detail fetch split) Cordoba's delta layer
+  never touches the network itself; it only post-processes whatever
+  `fetchTenders` already returned. This is also why there's no
+  `fetchListingIds`-style early-stop test here: there is no early-stop to
+  verify, by design (see above).
+- **Formatting gotcha found while wiring this up**: `npm run format`
+  (`prettier --write .`) errored on `test/fixtures/page1.html`,
+  `page2.html`, `page8_last.html`, and `page9_empty.html` - real captured
+  HTML with genuinely malformed markup (an unclosed `<b>`/`<b/>` pair in the
+  page chrome), which Prettier's HTML parser can't tolerate. This predates
+  the delta retrofit entirely (those fixtures were committed in the
+  original `feat:` commit) and would have failed identically before this
+  change. Fixed by adding `test/fixtures` to `.prettierignore` (matching
+  `uk-hse-enforcement-monitor`'s own `.prettierignore`, which already
+  excludes it) rather than touching the fixture content - these are real
+  captures deliberately kept byte-for-byte as scraped, not files meant to be
+  reformatted.
 
 ## Known scope limits (disclosed, not hidden)
 

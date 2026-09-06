@@ -40,7 +40,9 @@ describe('extractFormFields', () => {
     it('excludes submit/image button fields (we are not "clicking" every button)', () => {
         const $ = loadFixture('page1.html');
         const fields = extractFormFields($);
-        const buttonFieldNames = Object.keys(fields).filter((name) => name.includes('btnVerDetalles') || name.includes('btnPliego'));
+        const buttonFieldNames = Object.keys(fields).filter(
+            (name) => name.includes('btnVerDetalles') || name.includes('btnPliego'),
+        );
         expect(buttonFieldNames).toHaveLength(0);
     });
 
