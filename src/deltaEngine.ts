@@ -1,10 +1,13 @@
 import type { DateRangePreset } from './dateFilter.js';
 import { isWithinDateRange, parseFechaInicio } from './dateFilter.js';
-import type { TenderRecord, TenderRow } from './types.js';
+import { fingerprintOf } from './fingerprint.js';
+import type { DeltaState, SeenEntry } from './state.js';
+import type { EventType, TenderRecord, TenderRow } from './types.js';
 
 export interface BuildRecordsOptions {
-    seenIds: ReadonlySet<string>;
+    state: DeltaState;
     onlyNew: boolean;
+    eventTypes?: Exclude<EventType, 'UNCHANGED'>[];
     dateRange?: DateRangePreset;
     scrapedAt: string;
     now: Date;
@@ -13,7 +16,14 @@ export interface BuildRecordsOptions {
 
 export interface BuildRecordsResult {
     records: TenderRecord[];
-    allIdsThisRun: string[];
+    observedThisRun: { id: string; entry: SeenEntry }[];
+}
+
+function classify(previous: SeenEntry | undefined, row: TenderRow, hash: string): { eventType: EventType; previousEstado: string | null } {
+    if (!previous) return { eventType: 'NEW_LISTING', previousEstado: null };
+    if (previous.estado !== row.estado) return { eventType: 'STATUS_CHANGE', previousEstado: previous.estado };
+    if (previous.hash !== hash) return { eventType: 'UPDATED', previousEstado: null };
+    return { eventType: 'UNCHANGED', previousEstado: null };
 }
 
 // Cordoba's listing is NOT reliably sorted newest-first end to end - see
@@ -31,29 +41,73 @@ export interface BuildRecordsResult {
 // SAFE POST-FILTER applied to that already-complete result set. Correct,
 // not a pagination-cost optimization.
 export function buildTenderRecords(rows: TenderRow[], options: BuildRecordsOptions): BuildRecordsResult {
-    const allIdsThisRun = rows.map((row) => row.nroCotizacion);
+    const { state, onlyNew, eventTypes, dateRange, scrapedAt, now, sourceUrl } = options;
+    const allowed = eventTypes ? new Set<EventType>(eventTypes) : null;
+
     const records: TenderRecord[] = [];
+    const observedThisRun: { id: string; entry: SeenEntry }[] = [];
 
     for (const row of rows) {
-        const isNew = !options.seenIds.has(row.nroCotizacion);
-        if (options.onlyNew && !isNew) continue;
+        const previous = state.entries[row.nroCotizacion];
+        const hash = fingerprintOf(row);
+        const { eventType, previousEstado } = classify(previous, row, hash);
+        const isNew = !previous;
+        observedThisRun.push({
+            id: row.nroCotizacion,
+            entry: { estado: row.estado, hash, tipoContratacion: row.tipoContratacion, jurisdiccion: row.jurisdiccion },
+        });
+
+        if (onlyNew && eventType === 'UNCHANGED') continue;
+        if (allowed && eventType !== 'UNCHANGED' && !allowed.has(eventType)) continue;
 
         const fechaInicio = parseFechaInicio(row.fechaInicio);
-        if (options.dateRange && !isWithinDateRange(fechaInicio, options.dateRange, options.now)) continue;
+        if (dateRange && !isWithinDateRange(fechaInicio, dateRange, now)) continue;
 
         records.push({
             ...row,
             record_id: row.nroCotizacion,
-            // Every genuinely-new licitacion gets the same default signal -
-            // unlike HSE's convictions/notices split, procurement listings
-            // don't have a more specific, defensible sub-type to distinguish
-            // (a tender isn't itself a "sanction" or similar). See AGENTS.md.
-            event_type: 'NEW_LISTING',
-            scraped_at: options.scrapedAt,
+            event_type: eventType,
+            previousEstado,
+            scraped_at: scrapedAt,
             is_new: isNew,
-            source_url: options.sourceUrl,
+            source_url: sourceUrl,
+            contentHash: hash,
         });
     }
 
-    return { records, allIdsThisRun };
+    return { records, observedThisRun };
+}
+
+/**
+ * A previously-seen nroCotizacion absent from THIS run's fetch has left the active listing.
+ * Unlike a paginated source that early-stops, this is only trustworthy when the walk was
+ * COMPLETE (fetchTenders was not truncated by maxItems, see src/fetchTenders.ts) - a partial
+ * walk proves nothing about ids past where it stopped. Gated by the caller (src/main.ts), not
+ * here, so this function stays a pure, directly-testable transformation.
+ */
+export function findClosed(state: DeltaState, fetchedIds: ReadonlySet<string>, scrapedAt: string, sourceUrl: string): TenderRecord[] {
+    const closed: TenderRecord[] = [];
+    for (const [recordId, entry] of Object.entries(state.entries)) {
+        if (fetchedIds.has(recordId)) continue;
+        closed.push({
+            nroCotizacion: recordId,
+            tipoContratacion: entry.tipoContratacion,
+            servicioAdministrativo: '',
+            jurisdiccion: entry.jurisdiccion,
+            fechaInicio: '',
+            fechaFinalizacion: '',
+            estado: entry.estado,
+            prorroga: false,
+            items: [],
+            telefonoContacto: null,
+            record_id: recordId,
+            event_type: 'CLOSED',
+            previousEstado: null,
+            scraped_at: scrapedAt,
+            is_new: false,
+            source_url: sourceUrl,
+            contentHash: entry.hash,
+        });
+    }
+    return closed;
 }

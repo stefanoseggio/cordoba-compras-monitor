@@ -143,6 +143,67 @@ assuming anything about missing roots or client library bugs - a
 Windows/macOS dev machine's OS-level cert store can silently paper over a
 server sending an incomplete chain in a way Linux containers won't.
 
+## Delta engine v2 (2026-09-08)
+
+Supersedes the "record_id and event_type choices" bullet in the retrofit
+section below (kept as history - the pagination/state/dateRange reasoning
+there is still exactly correct).
+
+**What changed:**
+
+- `src/state.ts`: entries now carry `{estado, hash, tipoContratacion,
+  jurisdiccion}` per `nroCotizacion`, not a bare `seenIds: string[]`. Both
+  `estado` and the fingerprinted fields are already in the walked listing
+  row - free, no extra request. The two display fields let a CLOSED
+  record (see below) still say what it was, since this portal has no
+  per-tender page to look it up on once it has left the active list.
+- `src/fingerprint.ts` (new): sha1 over every field that can change while
+  a tender stays active with the same estado - dates, `prorroga`, line
+  items, contact phone.
+- `event_type` is now NEW_LISTING / STATUS_CHANGE (estado differs - the
+  real, live-observed value was "EN PROCESO" on every row in every
+  fixture captured so far, so this may rarely or never fire in practice,
+  but the site's `estado` column is a real field and there is no cost to
+  tracking it separately in case a transitional value ever does appear) /
+  UPDATED (same estado, fingerprint differs - e.g. a prorroga granted,
+  pushing out `fechaFinalizacion`) / UNCHANGED (full-mode only) / CLOSED
+  (new - a previously-active tender absent from a COMPLETE walk).
+- **CLOSED gated on `!truncatedByMaxItems`, applying the exact lesson
+  salta-compras-monitor's AGENTS.md already documented**: `fetchTenders`
+  now returns `{tenders, truncatedByMaxItems}`, computed once AFTER the
+  walk as `results.length >= maxItems` - not a flag set mid-loop, which
+  Salta's build proved is wrong at the exact boundary (a page that fills
+  the cap exactly is not proof the walk was complete). Applied here
+  directly from that precedent rather than re-discovering the same bug.
+- Pricing: two-tier PPE - `result` $0.003 (NEW_LISTING/STATUS_CHANGE/
+  UPDATED - full content, identical cost regardless of type here) /
+  `result-summary` $0.001 (CLOSED - a derived absence signal, nothing
+  fresh fetched). `Actor.pushData(record, eventName)` performs the charge
+  itself - verified against the installed SDK's `.d.ts` before writing
+  this, per the double-charge bug caught on salta-compras-monitor.
+- New `eventTypes` input narrows delta-mode delivery, matching the fleet
+  convention.
+- State shape is NOT backward compatible with v1 (documented in
+  CHANGELOG.md) - `loadState` treats the old `{seenIds}` shape as absent.
+- **Not touched, on purpose**: `fetchTenders`'s postback/cookie/ViewState
+  session flow, the Residential+AR proxy fallback, and the
+  `NODE_EXTRA_CA_CERTS`/`certs/cordoba-sectigo-chain.pem` TLS fix in the
+  Dockerfile - all still exactly as hard-won in the original build. This
+  actor's Dockerfile is also NOT the same shape as the rest of the fleet:
+  it's a genuine multi-stage build that runs `npm install --include=dev`
+  + `npm run build` in a builder stage and copies only `dist/` into the
+  slim final stage, so `dist/` staying gitignored is correct here (unlike
+  the single-stage Dockerfile fleet actors, where an out-of-date
+  `.gitignore` excluding `dist/` was a real bug - see santafe/tucuman/
+  salta/mendoza/entrerios AGENTS.md). Do not "fix" that by un-gitignoring
+  `dist/` here; it would just bloat the repo with a build artifact the
+  Dockerfile already regenerates itself. Similarly, `package.json`'s
+  `start` script is not what the container actually runs - the Dockerfile
+  has its own `CMD ["node", "dist/main.js"]` - so the well-known fleet
+  pitfall ("start" pointing at the tsx dev script, which crashes under
+  `npm install --only=prod`) never applied to this actor's real
+  deployment; `start` was still tidied to match for local-dev consistency.
+
 ## Delta engine (2026-09-06 retrofit)
 
 Added `onlyNew`/`dateRange` input plus the standardized B2B output envelope

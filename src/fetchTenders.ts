@@ -121,7 +121,21 @@ async function requestWithRetry(options: RequestOptions, maxRetries = 4, baseDel
 // pba-tenders-monitor's PBAC target; the fix is the same: Residential+AR
 // Apify Proxy. Local dev machines with a real Argentina/unblocked network
 // path won't see this - don't mistake "works locally" for "works in the cloud".
-export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise<TenderRow[]> {
+export interface FetchTendersResult {
+    tenders: TenderRow[];
+    /**
+     * True when maxItems cut the walk short - the loop stopped because the cap was reached,
+     * not because the pager ran out of pages. Computed as `results.length >= maxItems` AFTER
+     * the walk, not a mid-loop flag: a page that fills the cap exactly is NOT proof the walk
+     * was complete (see salta-compras-monitor's AGENTS.md for the exact boundary bug a
+     * mid-loop flag produces - this actor's port to v2 applied that lesson directly rather
+     * than repeating the mistake). Used by src/main.ts to decide whether it is safe to infer
+     * "no longer active" (CLOSED) for a previously-seen id absent from this walk.
+     */
+    truncatedByMaxItems: boolean;
+}
+
+export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise<FetchTendersResult> {
     // No explicit `ca` option here on purpose: passing tls.rootCertificates
     // (Node's exported "default" list) turned out NOT to be equivalent to
     // Node's real default trust store and broke validation locally where
@@ -214,5 +228,5 @@ export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise
         currentPage = newPage;
     }
 
-    return results;
+    return { tenders: results, truncatedByMaxItems: results.length >= maxItems };
 }

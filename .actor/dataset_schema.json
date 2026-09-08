@@ -52,7 +52,12 @@
             "event_type": {
                 "title": "Event Type",
                 "type": "string",
-                "description": "Always NEW_LISTING - see AGENTS.md for why this domain has no more specific sub-type"
+                "description": "NEW_LISTING (never seen before), STATUS_CHANGE (estado changed since last seen), UPDATED (a field changed, same estado), UNCHANGED (only when Delta mode is off) or CLOSED (no longer active)."
+            },
+            "previousEstado": {
+                "title": "Previous Estado",
+                "type": ["string", "null"],
+                "description": "Set only when event_type=STATUS_CHANGE: the estado this record_id was last seen under."
             },
             "scraped_at": {
                 "title": "Scraped At",
@@ -63,6 +68,11 @@
                 "title": "Is New",
                 "type": "boolean",
                 "description": "True if this tender's id was not in the persisted seen-set when this run started"
+            },
+            "contentHash": {
+                "title": "Content Hash",
+                "type": "string",
+                "description": "sha1 fingerprint of this record's changeable fields - used to detect UPDATED between runs."
             },
             "source_url": {
                 "title": "Source URL",
@@ -85,6 +95,24 @@
                     { "label": "Organismo", "format": "text", "field": "servicioAdministrativo" },
                     { "label": "Cierre", "format": "text", "field": "fechaFinalizacion" },
                     { "label": "Estado", "format": "text", "field": "estado" }
+                ]
+            }
+        },
+        "changes": {
+            "title": "Status changes & closures",
+            "transformation": {
+                "fields": ["record_id", "event_type", "previousEstado", "estado", "servicioAdministrativo", "fechaFinalizacion", "scraped_at"]
+            },
+            "display": {
+                "component": "table",
+                "columns": [
+                    { "label": "Nro Cotizacion", "format": "text", "field": "record_id" },
+                    { "label": "Evento", "format": "text", "field": "event_type" },
+                    { "label": "Estado anterior", "format": "text", "field": "previousEstado" },
+                    { "label": "Estado actual", "format": "text", "field": "estado" },
+                    { "label": "Organismo", "format": "text", "field": "servicioAdministrativo" },
+                    { "label": "Cierre", "format": "text", "field": "fechaFinalizacion" },
+                    { "label": "Detectado", "format": "date", "field": "scraped_at" }
                 ]
             }
         }

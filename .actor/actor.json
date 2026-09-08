@@ -2,9 +2,9 @@
     "$schema": "https://apify.com/schemas/v1/actor.ide.json",
     "actorSpecification": 1,
     "name": "cordoba-compras-monitor",
-    "title": "Cordoba Compras Publicas Monitor",
+    "title": "Cordoba Tenders Scraper & Monitor",
     "description": "Extracts active public tenders (licitaciones) from the Province of Cordoba, Argentina's official procurement portal, with organism, dates, status, reference budget per item and contact phone.",
-    "version": "1.0",
+    "version": "2.0",
     "buildTag": "latest",
     "minMemoryMbytes": 256,
     "maxMemoryMbytes": 512,
@@ -17,5 +17,6 @@
     "storages": {
         "dataset": "./dataset_schema.json"
     },
+    "changelog": "../CHANGELOG.md",
     "dockerfile": "../Dockerfile"
 }
