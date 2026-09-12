@@ -1,139 +1,111 @@
-# Cordoba Tenders Scraper & Monitor
+# Cordoba Government Tenders Monitor - Argentina Public Procurement (Licitaciones)
 
-**The tender-alert feed the Province of Cordoba never shipped.** Extracts every active public tender (Licitaciones) from the Province of Cordoba, Argentina's official procurement portal, with full detail per tender - organism, dates, status, per-item reference budget and contact phone - all from a single request per page, no extra detail lookup needed - and keeps it fresh with a delta mode that reports what is genuinely **new, changed status, amended, or closed**.
+## Executive Value Proposition
 
-[![Cordoba Tenders Scraper & Monitor](https://apify.com/actor-badge?actor=stefano_seggio/cordoba-compras-monitor)](https://apify.com/stefano_seggio/cordoba-compras-monitor)
+Checking the Province of Cordoba's official procurement portal by hand means clicking through a paginated, stateful ASP.NET grid, re-reading every row to notice what changed, and repeating that on your own schedule. This actor does the same walk programmatically - organism, dates, status, per-item reference budget and contact phone, already in the one listing fetch - and, with delta mode on, tells you specifically which tenders are new, changed status, amended, or closed since your last run, instead of handing you the full list to compare yourself. It scopes to exactly what the source publishes: the active Licitaciones register for the Province of Cordoba, nothing broader.
 
-- **Status changes and amendments, free.** `estado` and every mutable field (dates, prorroga, line items, contact) are already in every fetched row - status transitions and amendments (e.g. a deadline extension) are detected at zero extra cost.
-- **Knows when a tender leaves the active list.** A previously-tracked tender absent from a complete walk is reported `CLOSED` - awarded, closed or withdrawn. Only trusted against a complete (non-truncated) walk, never guessed.
-- **Handles a genuinely hard portal correctly.** A stateful ASP.NET postback/ViewState session, a sliding 11-slot pager window, a server that only sends its leaf TLS certificate (fixed via an explicitly chain-verified `NODE_EXTRA_CA_CERTS`), and a network-level block on non-Argentina traffic (fixed via Residential+AR proxy) - all handled so you don't have to.
+## Who uses this
 
-## Who uses Cordoba procurement data
+- **Contractors and suppliers bidding on Cordoba public works and services.** Pull the active register and use `tipoContratacion` and `servicioAdministrativo` on each returned tender to spot the ones that match what you sell and who's buying. With delta mode on, `STATUS_CHANGE` and the `prorroga` field tell you the moment a tracked tender's deadline is extended or its status moves, without refreshing the portal yourself.
+- **Market-entry research for companies evaluating the Cordoba public sector.** Pull a full run (delta mode off) and use `servicioAdministrativo`, `jurisdiccion` and `items[].presupuestoOficial` to see which agencies are actively procuring, at what reference budget, before deciding whether the province is worth pursuing.
+- **Procurement consultants and gestores tracking several clients' tenders at once.** Run on a schedule with `onlyNew: true` and get only what changed - `NEW_LISTING`, `STATUS_CHANGE`, `UPDATED` or `CLOSED` - across every tracked `nroCotizacion`, instead of manually re-checking each client's tenders on the portal.
 
-| Team | Question they ask | Fields that answer it | Decision |
+## Input
+
+```json
+{
+  "maxItems": 200,
+  "onlyNew": true,
+  "eventTypes": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED", "CLOSED"],
+  "dateRange": "7d",
+  "proxyConfiguration": { "useApifyProxy": true, "apifyProxyGroups": ["RESIDENTIAL"], "apifyProxyCountry": "AR" }
+}
+```
+
+| Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| Suppliers to provincial organisms | Did a tracked tender get awarded/closed, or its deadline extended? | `estado`, `event_type=STATUS_CHANGE`/`UPDATED`/`CLOSED`, `prorroga` | Stop chasing a closed tender, or re-check one that changed |
-| Bid consultants and gestores managing several clients | What changed across my clients' tracked tenders since yesterday? | `event_type`, `previousEstado`, `items` | Notify the client with the specific change |
-| Regional tender-data resellers / LATAM procurement platforms | A structured, change-aware Cordoba feed instead of a screen scrape that also has to solve the TLS/proxy problems | The whole envelope (`record_id`, `event_type`, `scraped_at`, `is_new`, `source_url`, `contentHash`) | Buy vs. build a scraper for a genuinely hard portal |
-| Journalists, researchers, transparency groups | Which organisms run the most tenders, at what reference budget? | `servicioAdministrativo`, `items[].presupuestoOficial`, `tipoContratacion` | Spending-pattern analysis |
+| `maxItems` | integer | `200` | Hard cap on the number of active tenders returned this run. The source only covers active/open Licitaciones - awarded or historical tenders are out of scope. |
+| `proxyConfiguration` | object | Residential + Argentina | Required. The source blocks non-residential-Argentina traffic at the network level (verified live: `ConnectTimeoutError` from Apify's datacenter IPs). Defaults to Residential + AR even if you omit this field. |
+| `onlyNew` | boolean | `false` | Delta mode. Persists which tender ids (`nroCotizacion`) this actor has already returned - and their last-known `estado` and content fingerprint - in a named key-value store that survives between scheduled runs, and returns only tenders that are new, changed status, amended, or closed since a prior run. |
+| `eventTypes` | array | all four | Which kinds of change to deliver when `onlyNew` is on (ignored - everything delivered - when it is off): `NEW_LISTING`, `STATUS_CHANGE`, `UPDATED`, `CLOSED`. |
+| `dateRange` | string | (none) | Optionally restrict results to tenders whose `fechaInicio` (publication date) falls within `"24h"`, `"7d"` or `"30d"`. Independent of `onlyNew`. |
 
-## Delta mode
+## Output
 
-Set `onlyNew: true` for recurring/scheduled monitoring and each run returns only tenders that are `NEW_LISTING`, `STATUS_CHANGE` (estado changed), `UPDATED` (a fingerprinted amendment) or `CLOSED` (no longer active). `eventTypes` narrows which you want. Every record also always carries `is_new` (computed even on a plain non-delta run).
+One dataset record per tender, combining the source's own fields with a standardized integration envelope. Example (real field values, from a tender fetched during development):
 
-**Implementation note, disclosed plainly:** unlike this fleet's other delta-enabled monitors, `onlyNew` here does **not** stop pagination early. Cordoba's listing is not reliably sorted newest-first end to end - a real, live-verified tender (`2026/000033`) sits between two other tenders published on different, unrelated dates within the very first page, both in a captured fixture and in a fresh live pull two days later. Short-circuiting pagination on that kind of source risks silently missing a genuinely new tender buried past wherever the "no more new ids" heuristic happened to trigger. So `onlyNew` fetches up to `maxItems` exactly as a normal run does, then filters the complete result afterward - correct, just not a pagination-cost optimization. See `AGENTS.md` for the full live evidence.
-
-**`CLOSED` only fires when the walk is complete.** If `maxItems` cuts the walk short, a previously-tracked tender absent from that partial fetch might just be past where the walk stopped, not actually gone - so CLOSED is skipped (and logged) on a truncated run. Raise `maxItems` above the real active-tender count to enable it reliably on a recurring monitor.
-
-```python
-from apify_client import ApifyClient
-
-client = ApifyClient("YOUR_TOKEN")
-run = client.actor("stefano_seggio/cordoba-compras-monitor").call(run_input={"onlyNew": True, "maxItems": 300})
-for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-    print(f"[{item['event_type']}] {item['nroCotizacion']} - {item['servicioAdministrativo']}")
+```json
+{
+  "nroCotizacion": "2026/000091",
+  "tipoContratacion": "Licitación - Soporte Digital",
+  "servicioAdministrativo": "Agencia Córdoba De Inversión Y Financiamiento",
+  "jurisdiccion": "Agencia Córdoba De Inversión Y Financiamiento",
+  "fechaInicio": "04/09/2026 09:21:28",
+  "fechaFinalizacion": "21/09/2026 12:00:00",
+  "estado": "EN PROCESO",
+  "prorroga": false,
+  "items": [
+    {
+      "renglon": "EJECUCIÓN DUPLICACIÓN Y ROTONDA EN CALLE REFORMA UNIVERSITARIA DE LA CIUDAD DE RÍO CUARTO - DPTO RIO CUARTO",
+      "cantidad": "1",
+      "precioReferencia": "$ 3.961.365.736,2000",
+      "presupuestoOficial": "$ 3.961.365.736,2000"
+    }
+  ],
+  "telefonoContacto": "3517660269",
+  "record_id": "2026/000091",
+  "event_type": "NEW_LISTING",
+  "previousEstado": null,
+  "scraped_at": "2026-09-04T20:08:17.311Z",
+  "is_new": true,
+  "contentHash": "23092e21aec453265045c95e1a122288f48be84c",
+  "source_url": "https://webecommerce.cba.gov.ar/VistaPublica/ConsultaPublicaCotizacion.aspx?TIPO_CONSULTA_PUBLICA=LI"
+}
 ```
-
-```javascript
-import { ApifyClient } from 'apify-client';
-
-const client = new ApifyClient({ token: 'YOUR_TOKEN' });
-const run = await client.actor('stefano_seggio/cordoba-compras-monitor').call({ onlyNew: true, maxItems: 300 });
-const { items } = await client.dataset(run.defaultDatasetId).listItems();
-```
-
-Run this on an Apify schedule and pipe the output straight into Slack/Email/Zapier/Make/your own endpoint via [Apify's native dataset webhooks](https://docs.apify.com/platform/integrations/webhooks) - every record already carries the standardized integration metadata above, so no intermediate parser is needed.
-
-## What you get
-
-| Field | Description |
-| --- | --- |
-| `record_id` | Same value as `nroCotizacion` - the natural unique id for this tender |
-| `event_type` | `NEW_LISTING` / `STATUS_CHANGE` / `UPDATED` / `UNCHANGED` / `CLOSED` |
-| `previousEstado` | Set only for `STATUS_CHANGE`: the estado this record_id was last seen under |
-| `contentHash` | sha1 fingerprint used to detect `UPDATED` |
-| `scraped_at` | ISO-8601 timestamp of this run's extraction |
-| `is_new` | `true` if not seen in a prior run (computed even when `onlyNew` is off) |
-| `source_url` | The general listing page - see Known limitations, no per-tender deep link |
-
-Plus the full domain detail:
 
 | Field | Description |
 | --- | --- |
 | `nroCotizacion` | Tender process number, e.g. `2026/000091` |
-| `tipoContratacion` | Contract type, e.g. "Licitacion - Soporte Digital" |
-| `servicioAdministrativo` | Issuing agency |
+| `tipoContratacion` | Contract type, e.g. "Licitación - Soporte Digital" |
+| `servicioAdministrativo` | Issuing agency (organism) |
 | `jurisdiccion` | Jurisdiction |
 | `fechaInicio` | Publication date |
 | `fechaFinalizacion` | Closing/opening date and time |
-| `estado` | Status (e.g. "EN PROCESO") |
+| `estado` | Status, e.g. "EN PROCESO" |
 | `prorroga` | Whether the deadline has been extended |
-| `items` | Line items: description, quantity, reference price, official budget |
+| `items` | Line items: description (`renglon`), quantity, reference price, official budget - extracted inline, no extra request needed |
 | `telefonoContacto` | Contact phone, if published |
+| `record_id` | Same value as `nroCotizacion` |
+| `event_type` | `NEW_LISTING` / `STATUS_CHANGE` / `UPDATED` / `UNCHANGED` / `CLOSED` |
+| `previousEstado` | Set only for `STATUS_CHANGE`: the `estado` this record was last seen under |
+| `scraped_at` | ISO-8601 timestamp of this run's extraction |
+| `is_new` | `true` if this tender's id was not in the persisted seen-set when the run started |
+| `contentHash` | sha1 fingerprint of the tender's changeable fields (dates, `prorroga`, items, contact phone), used to detect `UPDATED` between runs |
+| `source_url` | The general listing page - this ASP.NET portal has no stable per-tender deep link (every "Ver Detalles" control is a session/ViewState-bound postback, not a plain URL) |
 
-## Input
+## Reliability
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `maxItems` | integer | `200` | Hard cap on tenders returned this run |
-| `onlyNew` | boolean | `false` | Delta mode - see above |
-| `eventTypes` | array | all four | Which of `NEW_LISTING`/`STATUS_CHANGE`/`UPDATED`/`CLOSED` to deliver when `onlyNew` is on |
-| `dateRange` | string | (none) | `"24h"` \| `"7d"` \| `"30d"` - filter by `fechaInicio` |
-| `proxyConfiguration` | object | Residential+AR | Required - the source blocks non-Argentina datacenter traffic at the network level |
+- **Retries with backoff.** Every request (initial GET and each pagination POST) retries up to 4 times with exponential backoff before the run gives up and returns what it has gathered so far.
+- **Stateful pagination handled correctly.** The portal is a classic ASP.NET postback/ViewState grid with an 11-slot sliding pager window, not a simple paged URL. The actor tracks the session cookie and replicates the full form state from each response - every input's current value, including the ViewState/EventValidation hidden fields, and only checkboxes actually checked - exactly as a real browser would on postback, including the "siguiente bloque" control that slides the pager window forward past its current 11-slot edge.
+- **Deduplicates against live inserts.** Because new tenders can be published while a multi-page walk is in progress (verified live: a freshly-inserted tender shifted later rows into duplicate positions across two consecutive page fetches), every walked row is deduplicated by `nroCotizacion` so a mid-run insert cannot produce duplicate dataset records.
+- **TLS chain fixed explicitly.** The source's server sends only its leaf certificate, not the required intermediate, which fails validation in a clean container. The actor supplies the missing intermediate/root via `NODE_EXTRA_CA_CERTS`, additively extending Node's default trust store rather than replacing it.
+- **Residential Argentina proxy required and defaulted.** The source blocks non-Argentina datacenter traffic at the network level (verified live: `ConnectTimeoutError` from Apify's own cloud IPs). The actor defaults to Residential + Argentina proxy even if you omit `proxyConfiguration` entirely, so API/CLI callers can't silently fail by leaving it out.
+- **Delta state persisted safely.** Delta mode's seen-tender state lives in a named key-value store (survives between scheduled runs, unlike a run's default store) and only marks ids "seen" once they are actually pushed to the dataset this run - a tender held back by `maxItems` or a charge limit stays eligible to be correctly flagged next run rather than silently disappearing from tracking.
+- **`CLOSED` is only ever reported against a complete walk.** If `maxItems` cuts a run's page walk short, a previously-tracked tender missing from that partial fetch might simply be past where the walk stopped, not actually gone - so `CLOSED` detection is skipped (and logged) on a truncated run, never guessed.
+- **`onlyNew` is a safe post-filter, not early-stop pagination.** Cordoba's listing is not reliably sorted newest-first end to end (a real tender was observed out of publication-date order within the very first page). So delta mode still walks the full listing up to `maxItems` before filtering, rather than risking a missed tender by stopping early.
 
-```json
-{ "maxItems": 200 }
-```
+## Pricing
 
-## Scope
+Pay per event, platform usage included - no separate compute charge:
 
-Covers **Licitaciones** (`TIPO_CONSULTA_PUBLICA=LI`) - the only query type confirmed working on this endpoint. Other contract types (Contratacion Directa, Concurso de Precios) were checked live and return an error on this same endpoint; if Cordoba publishes those elsewhere, it's a different page not covered by this actor yet.
-
-## Usage
-
-```bash
-curl "https://api.apify.com/v2/acts/stefano_seggio~cordoba-compras-monitor/run-sync-get-dataset-items?token=YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"maxItems": 200}'
-```
-
-```python
-from apify_client import ApifyClient
-
-client = ApifyClient("YOUR_TOKEN")
-run = client.actor("stefano_seggio/cordoba-compras-monitor").call(run_input={"maxItems": 200})
-for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-    print(item["nroCotizacion"], item["tipoContratacion"], item["estado"])
-```
-
-```javascript
-import { ApifyClient } from 'apify-client';
-
-const client = new ApifyClient({ token: 'YOUR_TOKEN' });
-const run = await client.actor('stefano_seggio/cordoba-compras-monitor').call({ maxItems: 200 });
-const { items } = await client.dataset(run.defaultDatasetId).listItems();
-```
-
-## How much does it cost to monitor Cordoba tenders?
-
-Pay per event, platform usage included:
-
-| Event | Price | When |
+| Event | Price | When it's charged |
 | --- | --- | --- |
-| `result` | **$0.003** per record | `NEW_LISTING`, `STATUS_CHANGE` or `UPDATED` - full content, already inline in every listing row |
-| `result-summary` | **$0.001** per record | `CLOSED` - a derived absence signal, nothing fresh to fetch |
+| `result` | $0.003 per record | `NEW_LISTING`, `STATUS_CHANGE` or `UPDATED` - full tender content |
+| `result-summary` | $0.001 per record | `CLOSED` - a derived absence signal, nothing fresh to fetch |
 | Actor start | $0.00005 | Once per run |
 
-A daily monitor finding 5 changes across the active register costs about $0.02/day (~$0.45/month).
+The same two rates apply regardless of `onlyNew`: any non-`CLOSED` record (including `UNCHANGED`, delivered only when `onlyNew` is off) bills as a `result`; only `CLOSED` records bill as a `result-summary`. Recurring monitoring with `onlyNew: true` naturally costs less per run because it only delivers what actually changed.
 
-## Known limitations
+## Support & Enterprise SLA
 
-- Requires a Residential + Argentina proxy - the source blocks non-Argentina datacenter traffic at the network level. This is handled automatically (the actor defaults to it even if you don't pass `proxyConfiguration`).
-- Only the current, active tender list is available (no historical archive browsing was found on this endpoint).
-- Live data changes between requests: the actor deduplicates by `nroCotizacion` to stay correct even when new tenders are published mid-run and shift page contents.
-- `source_url` points to the general listing page, not a per-tender deep link - this ASP.NET portal has no stable, stateless URL for an individual tender (every "Ver Detalles" control is a session/ViewState-bound postback, verified against the real markup). To open a specific tender, search the listing by its `nroCotizacion`.
-- `onlyNew` is a safe post-filter, not early-stop pagination - see Delta mode above and `AGENTS.md` for the live evidence behind that choice.
-- `CLOSED` is only ever reported when this run's walk was complete (not truncated by `maxItems`) - see Delta mode above.
-- The real-world `estado` value observed on every fetched tender so far is "EN PROCESO" - `STATUS_CHANGE` is tracked and reported correctly if the source ever shows a different value, but has not been observed firing in practice.
-
-Full technical detail, including real bugs found and fixed while building this (a viewstate validation failure, a silent pagination-stall bug, and a genuine server-side TLS misconfiguration), is documented in `AGENTS.md`.
+This is an independently developed and maintained actor, not a managed enterprise product - there is no contractual uptime SLA. Bug reports and feature requests are handled through the actor's issue tracker on the Apify Store; issues are typically triaged within about 48 hours. If the Cordoba portal changes its markup or postback flow, please open an issue with the details you're seeing so the extraction logic can be checked against the live source.

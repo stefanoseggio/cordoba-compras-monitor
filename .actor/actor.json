@@ -1,22 +1,25 @@
 {
-    "$schema": "https://apify.com/schemas/v1/actor.ide.json",
-    "actorSpecification": 1,
-    "name": "cordoba-compras-monitor",
-    "title": "Cordoba Tenders Scraper & Monitor",
-    "description": "Extracts active public tenders (licitaciones) from the Province of Cordoba, Argentina's official procurement portal, with organism, dates, status, reference budget per item and contact phone.",
-    "version": "2.0",
-    "buildTag": "latest",
-    "minMemoryMbytes": 256,
-    "maxMemoryMbytes": 512,
-    "meta": {
-        "templateId": "ts-crawlee-cheerio",
-        "generatedBy": "Claude Code with Claude Sonnet 5"
-    },
-    "inputSchema": "./input_schema.json",
-    "outputSchema": "./output_schema.json",
-    "storages": {
-        "dataset": "./dataset_schema.json"
-    },
-    "changelog": "../CHANGELOG.md",
-    "dockerfile": "../Dockerfile"
+  "$schema": "https://apify.com/schemas/v1/actor.ide.json",
+  "actorSpecification": 1,
+  "name": "cordoba-compras-monitor",
+  "title": "Cordoba Argentina Licitaciones - Tender Delta API",
+  "description": "Monitors active public tenders (licitaciones) on the Province of Cordoba, Argentina official procurement portal. Returns organism, dates, status, per-item reference budget, and contact phone, with a delta mode that flags new, status-changed, amended, or closed tenders on recurring runs.",
+  "version": "2.0",
+  "buildTag": "latest",
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 512,
+  "meta": {
+    "templateId": "ts-crawlee-cheerio",
+    "generatedBy": "Claude Code with Claude Sonnet 5"
+  },
+  "inputSchema": "./input_schema.json",
+  "outputSchema": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
+  "changelog": "../CHANGELOG.md",
+  "dockerfile": "../Dockerfile",
+  "categories": [
+    "BUSINESS"
+  ]
 }
