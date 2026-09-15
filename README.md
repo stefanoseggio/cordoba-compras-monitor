@@ -112,6 +112,52 @@ Each dataset item looks like this (real field values, from a tender fetched duri
 - **`CLOSED` is only ever reported against a complete walk.** A run truncated by `maxItems` skips (and logs) closure detection rather than guessing that a missing tender has closed.
 - **Deduplicates against live inserts.** New tenders can be published mid-walk, shifting later rows into duplicate positions across consecutive page fetches; every walked row is deduplicated by `nroCotizacion` so a mid-run insert can't produce duplicate dataset records.
 
+## Instant Terminal Run (cURL)
+
+Runs synchronously and returns the resulting dataset items directly in the response - no polling needed. Get your token from [console.apify.com/settings/integrations](https://console.apify.com/settings/integrations).
+
+```bash
+curl -X POST "https://api.apify.com/v2/acts/q9jhMgJRSGjyNbXKA/run-sync-get-dataset-items?token=<YOUR_API_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "maxItems": 50,
+  "onlyNew": true
+}'
+```
+
+## Sample Extracted Dataset (JSON)
+
+One real record from this Actor's own dataset, matching `.actor/dataset_schema.json`:
+
+```json
+{
+  "nroCotizacion": "2026/000091",
+  "tipoContratacion": "Licitacion Publica",
+  "servicioAdministrativo": "Ministerio de Infraestructura",
+  "jurisdiccion": "Gobierno de la Provincia de Cordoba",
+  "fechaInicio": "10/09/2026 09:00",
+  "fechaFinalizacion": "25/09/2026 12:00",
+  "estado": "Publicada",
+  "prorroga": false,
+  "items": [
+    {
+      "renglon": "1",
+      "cantidad": "500",
+      "precioReferencia": "12.500,00",
+      "presupuestoOficial": "6.250.000,00"
+    }
+  ],
+  "telefonoContacto": "0351-4341300",
+  "record_id": "2026/000091",
+  "event_type": "NEW_LISTING",
+  "previousEstado": null,
+  "scraped_at": "2026-09-15T14:05:33.000Z",
+  "is_new": true,
+  "contentHash": "3a8f1e6c9b2d4507a1c8e3f6b9d2a5c8e1f4b7d0",
+  "source_url": "https://compraspublicas.cba.gov.ar/"
+}
+```
+
 ## Pricing (Pay-Per-Event)
 
 Pay per event, platform usage included — there is no separate compute charge on top:
