@@ -2,7 +2,7 @@
 
 # Cordoba Argentina Licitaciones - Tender Delta API
 
-**A Cordoba, Argentina government procurement (compras públicas) monitor that turns a stateful, session-bound tenders portal into a clean, delta-aware public tenders dataset.**
+**A Cordoba, Argentina government procurement (compras públicas) monitor that turns a stateful, session-bound tenders portal into a clean, delta-aware public tenders dataset, on a schedule you configure.**
 
 [![Built for Apify](https://img.shields.io/badge/built%20for-Apify-00C0FF?style=flat-square&logo=apify&logoColor=white)](https://apify.com)
 [![Pay-Per-Event](https://img.shields.io/badge/pay--per--event-from%20%240.001-success?style=flat-square)](https://apify.com/stefano_seggio/cordoba-compras-monitor)
@@ -31,6 +31,22 @@ The scope is deliberately exact: this actor covers the active *Licitaciones* reg
 - **Market-entry research teams evaluating the Córdoba public sector** — a full run (`onlyNew: false`) surfaces which agencies are actively procuring, and at what reference budget, via `servicioAdministrativo`, `jurisdiccion`, and `items[].presupuestoOficial`.
 - **Procurement consultants and *gestores* tracking several clients' tenders at once** — a scheduled run with `onlyNew: true` returns only `NEW_LISTING`, `STATUS_CHANGE`, `UPDATED`, or `CLOSED` across every tracked `nroCotizacion`, instead of manually re-checking each client's tenders one by one.
 
+## Cost & BYOK Disclosure
+
+**Pricing model:** pay per event, platform usage included — there is no separate compute charge on top.
+
+| Event | What triggers it | Price |
+| --- | --- | --- |
+| `result` | A tender is delivered as `NEW_LISTING`, `STATUS_CHANGE`, or `UPDATED` — full tender content | Pay-per-result — see the [live Store pricing tab](https://apify.com/stefano_seggio/cordoba-compras-monitor) for the current exact rate |
+| `result-summary` | A tender is delivered as `CLOSED` — a derived absence signal, nothing fresh to fetch | Pay-per-result — see the live Store pricing tab for the current exact rate |
+| Actor start | Once per run, regardless of how many tenders are returned | See the live Store pricing tab for the current exact rate |
+
+Specific per-event rates have appeared in this Actor's own Store listing and in earlier README revisions; the Store's **Pricing** tab is the single, always-current source of truth, so it's linked above rather than a number restated here that could drift out of date. Recurring monitoring with `onlyNew: true` costs less per run by construction: it only ever delivers what actually changed since the last run, instead of billing `result` for every unchanged tender in the register every time.
+
+**Delta suppression, never a refund.** A tender whose `estado` and content fingerprint both match what was already delivered is classified `UNCHANGED` and is never pushed to the dataset — the fingerprint comparison against the persisted key-value store happens *before* delivery on every run, so an unchanged tender is simply never billed, not refunded after the fact.
+
+**BYOK:** This Actor requires no third-party API key. It does require a **Residential + Argentina** Apify Proxy group (defaulted automatically even if `proxyConfiguration` is omitted) because the source blocks non-residential, non-Argentina traffic — that proxy is billed through your own Apify platform usage, not a separate third-party key you supply.
+
 ## How it works
 
 ```mermaid
@@ -43,10 +59,10 @@ flowchart LR
     E -->|"estado changed"| G["STATUS_CHANGE"]
     E -->|"same estado, hash changed"| H["UPDATED"]
     E -->|"absent from a complete walk"| I["CLOSED"]
-    F --> J["result event — $0.003"]
+    F --> J["result event"]
     G --> J
     H --> J
-    I --> K["result-summary event — $0.001"]
+    I --> K["result-summary event"]
     J --> L[("Apify Dataset")]
     K --> L
 ```
@@ -63,19 +79,11 @@ flowchart LR
 | **Recency filter (`dateRange`)** | Optionally restricts results to tenders published in the last `24h`, `7d`, or `30d`, independent of delta mode. |
 | **Inline line-item extraction** | Each tender's items (`renglon`, quantity, reference price, official budget) are extracted from the listing fetch itself — no per-tender follow-up request. |
 
-## Input reference
+## Quickstart
 
-| Field | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `maxItems` | integer | `200` | Hard cap on active tenders returned this run. |
-| `onlyNew` | boolean | `false` | Enables delta mode; recommended for recurring monitoring, off for a one-off full extraction. |
-| `eventTypes` | array | all four | Which of `NEW_LISTING` / `STATUS_CHANGE` / `UPDATED` / `CLOSED` to deliver when `onlyNew` is on. |
-| `dateRange` | string | *(none)* | Restrict to `fechaInicio` within `24h`, `7d`, or `30d`. |
-| `proxyConfiguration` | object | Residential + AR | Required by the source; defaulted even if omitted. |
+Run it directly with the [Apify CLI](https://docs.apify.com/cli), the REST API, or the `apify-client` SDK in Python or Node.js.
 
-## Quick start
-
-Run it directly with the [Apify CLI](https://docs.apify.com/cli) using a realistic input for recurring monitoring:
+### Apify CLI
 
 ```bash
 apify call cordoba-compras-monitor --input '{
@@ -91,28 +99,7 @@ apify call cordoba-compras-monitor --input '{
 }'
 ```
 
-Each dataset item looks like this (real field values, from a tender fetched during development):
-
-```json
-{
-  "nroCotizacion": "2026/000091",
-  "tipoContratacion": "Licitación - Soporte Digital",
-  "servicioAdministrativo": "Agencia Córdoba De Inversión Y Financiamiento",
-  "estado": "EN PROCESO",
-  "event_type": "NEW_LISTING",
-  "contentHash": "23092e21aec453265045c95e1a122288f48be84c"
-}
-```
-
-## Reliability
-
-- **Retries with backoff.** Every request — the initial GET and each pagination POST — retries up to 4 times with exponential backoff before the run gives up and returns what it has gathered so far.
-- **TLS chain fixed explicitly.** The source's server sends only its leaf certificate, not the required intermediate; the actor supplies the missing intermediate/root via `NODE_EXTRA_CA_CERTS`, additively extending Node's trust store.
-- **Delta state persisted safely.** A tender is only marked "seen" once it is actually pushed to the dataset this run, so one held back by `maxItems` stays correctly eligible for detection next run rather than silently dropping out of tracking.
-- **`CLOSED` is only ever reported against a complete walk.** A run truncated by `maxItems` skips (and logs) closure detection rather than guessing that a missing tender has closed.
-- **Deduplicates against live inserts.** New tenders can be published mid-walk, shifting later rows into duplicate positions across consecutive page fetches; every walked row is deduplicated by `nroCotizacion` so a mid-run insert can't produce duplicate dataset records.
-
-## Instant Terminal Run (cURL)
+### cURL (instant, synchronous)
 
 Runs synchronously and returns the resulting dataset items directly in the response - no polling needed. Get your token from [console.apify.com/settings/integrations](https://console.apify.com/settings/integrations).
 
@@ -125,7 +112,74 @@ curl -X POST "https://api.apify.com/v2/acts/q9jhMgJRSGjyNbXKA/run-sync-get-datas
 }'
 ```
 
-## Sample Extracted Dataset (JSON)
+### Python (`apify-client`)
+
+```python
+import os
+from apify_client import ApifyClient
+
+client = ApifyClient(os.environ["APIFY_TOKEN"])
+
+run = client.actor("stefano_seggio/cordoba-compras-monitor").call(
+    run_input={
+        "maxItems": 100,
+        "onlyNew": True,
+        "eventTypes": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED", "CLOSED"],
+        "dateRange": "7d",
+        "proxyConfiguration": {
+            "useApifyProxy": True,
+            "apifyProxyGroups": ["RESIDENTIAL"],
+            "apifyProxyCountry": "AR",
+        },
+    }
+)
+
+for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+    print(f"{item['nroCotizacion']} [{item['event_type']}] {item['servicioAdministrativo']} - {item['estado']}")
+```
+
+A full runnable version of this script is at `examples/run_monitor.py` in this repo.
+
+### Node.js (`apify-client`)
+
+```javascript
+import { ApifyClient } from 'apify-client';
+
+const client = new ApifyClient({ token: process.env.APIFY_TOKEN });
+
+const run = await client.actor('stefano_seggio/cordoba-compras-monitor').call({
+  maxItems: 100,
+  onlyNew: true,
+  eventTypes: ['NEW_LISTING', 'STATUS_CHANGE', 'UPDATED', 'CLOSED'],
+  dateRange: '7d',
+  proxyConfiguration: {
+    useApifyProxy: true,
+    apifyProxyGroups: ['RESIDENTIAL'],
+    apifyProxyCountry: 'AR',
+  },
+});
+
+const { items } = await client.dataset(run.defaultDatasetId).listItems();
+for (const item of items) {
+  console.log(`${item.nroCotizacion} [${item.event_type}] ${item.servicioAdministrativo} - ${item.estado}`);
+}
+```
+
+A full runnable version (CommonJS) is at `examples/run-monitor.js` in this repo.
+
+## Input & Output Schema
+
+### Input
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `maxItems` | integer | `200` | Hard cap on active tenders returned this run. |
+| `onlyNew` | boolean | `false` | Enables delta mode; recommended for recurring monitoring, off for a one-off full extraction. |
+| `eventTypes` | array | all four | Which of `NEW_LISTING` / `STATUS_CHANGE` / `UPDATED` / `CLOSED` to deliver when `onlyNew` is on. |
+| `dateRange` | string | *(none)* | Restrict to `fechaInicio` within `24h`, `7d`, or `30d`. |
+| `proxyConfiguration` | object | Residential + AR | Required by the source; defaulted even if omitted. |
+
+### Output
 
 One real record from this Actor's own dataset, matching `.actor/dataset_schema.json`:
 
@@ -158,17 +212,31 @@ One real record from this Actor's own dataset, matching `.actor/dataset_schema.j
 }
 ```
 
-## Pricing (Pay-Per-Event)
+| Field | Description |
+| --- | --- |
+| `nroCotizacion` / `record_id` | The tender process number, e.g. `2026/000091` — this source's own identifier |
+| `tipoContratacion` | Contract/procedure type, e.g. "Licitacion Publica" |
+| `servicioAdministrativo` | The issuing agency |
+| `jurisdiccion` | The government jurisdiction the tender falls under |
+| `fechaInicio` / `fechaFinalizacion` | Publication and closing/opening date and time |
+| `estado` | Current status (e.g. "Publicada", "En Proceso") |
+| `prorroga` | Whether the deadline has been extended |
+| `items[].renglon` / `cantidad` / `precioReferencia` / `presupuestoOficial` | Line items with quantity, reference price and official budget, extracted inline from the listing fetch — no extra request needed |
+| `telefonoContacto` | Contact phone number published with the tender |
+| `event_type` | `NEW_LISTING`, `STATUS_CHANGE`, `UPDATED`, or `CLOSED` |
+| `previousEstado` | The `estado` this tender was last seen under, set only on a `STATUS_CHANGE` record |
+| `scraped_at` / `is_new` | ISO timestamp of extraction, and whether this `nroCotizacion` was previously unseen |
+| `contentHash` | The SHA-1 content fingerprint used to detect `UPDATED` amendments between runs (see `src/fingerprint.ts`) |
+| `source_url` | The general listing page — see Known limitations for why there is no stable per-tender URL |
 
-Pay per event, platform usage included — there is no separate compute charge on top:
+## Reliability & Delta Engine
 
-| Event | Price | Charged when |
-| --- | --- | --- |
-| `result` | $0.003 per record | A tender is delivered as `NEW_LISTING`, `STATUS_CHANGE`, or `UPDATED` — full tender content. |
-| `result-summary` | $0.001 per record | A tender is delivered as `CLOSED` — a derived absence signal, nothing fresh to fetch. |
-| Actor start | $0.00005 | Once per run, regardless of how many tenders are returned. |
-
-Recurring monitoring with `onlyNew: true` costs less per run by construction: it only ever delivers what actually changed since the last run, instead of billing `result` for every unchanged tender in the register every time.
+- **Retries with backoff.** Every request — the initial GET and each pagination POST — retries up to 4 times with exponential backoff before the run gives up and returns what it has gathered so far.
+- **TLS chain fixed explicitly.** The source's server sends only its leaf certificate, not the required intermediate; the actor supplies the missing intermediate/root via `NODE_EXTRA_CA_CERTS`, additively extending Node's trust store.
+- **Delta state persisted safely.** A tender is only marked "seen" once it is actually pushed to the dataset this run, so one held back by `maxItems` stays correctly eligible for detection next run rather than silently dropping out of tracking.
+- **`CLOSED` is only ever reported against a complete walk.** A run truncated by `maxItems` skips (and logs) closure detection rather than guessing that a missing tender has closed.
+- **Deduplicates against live inserts.** New tenders can be published mid-walk, shifting later rows into duplicate positions across consecutive page fetches; every walked row is deduplicated by `nroCotizacion` so a mid-run insert can't produce duplicate dataset records.
+- **Change detection uses a real SHA-1 content fingerprint** (`src/fingerprint.ts`), computed over the tender's stable fields, and compared against the last-seen `estado` and hash stored per `nroCotizacion` in a named key-value store that survives between scheduled runs.
 
 ## Why not just scrape it yourself
 
@@ -184,6 +252,21 @@ Recurring monitoring with `onlyNew: true` costs less per run by construction: it
 - **Delta mode is a post-filter, not a pagination shortcut.** Córdoba's listing is not reliably sorted newest-first end to end, so `onlyNew` still walks the full register up to `maxItems` before filtering, rather than risking a missed tender by stopping early.
 - **`dateRange` reflects the source's own declared publication date**, not an independently verified first-seen timestamp.
 - **No contractual SLA.** This is an independently developed and maintained actor; bug reports and feature requests go through the Apify Store issue tracker and are typically triaged within about 48 hours.
+
+## Contributing & Local Setup
+
+This repository contains the Actor's real, buildable TypeScript source (`src/`), not just documentation:
+
+```bash
+git clone https://github.com/stefanoseggio/cordoba-compras-monitor.git
+cd cordoba-compras-monitor
+npm install
+apify login              # paste your Apify API token
+npm run start:dev        # tsx src/main.ts - runs the Actor locally against the real source
+npm test                 # vitest run
+```
+
+`npm run build` compiles with `tsc`, and `npm run lint` / `npm run format` run this repo's ESLint/Prettier config. Found a bug, or want a new filter, output field, or jurisdiction covered? Open an issue or pull request on this GitHub repo, or use the **Issues** tab on the [Apify Store listing](https://apify.com/stefano_seggio/cordoba-compras-monitor) for operational reports against the live Actor.
 
 ---
 
