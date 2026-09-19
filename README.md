@@ -51,7 +51,7 @@ Specific per-event rates have appeared in this Actor's own Store listing and in 
 
 ```mermaid
 flowchart LR
-    A["webecommerce.cba.gov.ar<br/>ASP.NET Licitaciones grid"] -->|"Residential AR proxy<br/>+ NODE_EXTRA_CA_CERTS TLS fix"| B["Stateful pagination<br/>cookie + ViewState/EventValidation replay"]
+    A["webecommerce.cba.gov.ar<br/>ASP.NET Licitaciones grid"] -->|"Residential AR proxy<br/>+ impit TLS chain handling"| B["Stateful pagination<br/>cookie + ViewState/EventValidation replay"]
     B --> C["Row parsing (Cheerio)<br/>nroCotizacion, estado, items, telefonoContacto"]
     C --> D["sha1 contentHash +<br/>named KV delta store lookup"]
     D --> E{"Compare to last-seen<br/>estado &amp; hash"}
@@ -293,7 +293,7 @@ One real record from this Actor's own dataset, matching `.actor/dataset_schema.j
 ## Reliability & Delta Engine
 
 - **Retries with backoff.** Every request — the initial GET and each pagination POST — retries up to 4 times with exponential backoff before the run gives up and returns what it has gathered so far.
-- **TLS chain fixed explicitly.** The source's server sends only its leaf certificate, not the required intermediate; the actor supplies the missing intermediate/root via `NODE_EXTRA_CA_CERTS`, additively extending Node's trust store.
+- **TLS chain handled by the HTTP client.** The source's server sends only its leaf certificate, not the required intermediate. The actor's `impit`-based transport (`src/fetchTenders.ts`) validates the chain correctly on its own by default — live-verified against the real source; see AGENTS.md's "HTTP transport: impit" section. The Dockerfile's earlier `NODE_EXTRA_CA_CERTS` fix (for the previous Node-native HTTP client) is left in place as a dormant fallback, not removed.
 - **Delta state persisted safely.** A tender is only marked "seen" once it is actually pushed to the dataset this run, so one held back by `maxItems` stays correctly eligible for detection next run rather than silently dropping out of tracking.
 - **`CLOSED` is only ever reported against a complete walk.** A run truncated by `maxItems` skips (and logs) closure detection rather than guessing that a missing tender has closed.
 - **`CLOSED` records carry real last-known field values, not blanks.** The source has no per-tender page to re-fetch once a tender has left the active list, so `servicioAdministrativo`, `fechaInicio`, `fechaFinalizacion`, `prorroga`, `items` and `telefonoContacto` on a `CLOSED` record are the tender's actual values as of its last observation (persisted alongside `estado` in the delta state), never fabricated empty/`false` placeholders. `prorroga` is `null` only for a tender tracked before this field existed.
@@ -303,7 +303,7 @@ One real record from this Actor's own dataset, matching `.actor/dataset_schema.j
 ## Why not just scrape it yourself
 
 - **Zero infrastructure.** No container to keep patched, no headless-browser runtime to maintain — the actor runs on Apify's platform on your own schedule.
-- **No proxy or session babysitting.** The source blocks non-residential, non-Argentina IPs outright and serves an incomplete TLS chain; both are already handled (Residential+AR proxy, `NODE_EXTRA_CA_CERTS`) so you don't debug `ConnectTimeoutError`s or certificate failures yourself.
+- **No proxy or session babysitting.** The source blocks non-residential, non-Argentina IPs outright and serves an incomplete TLS chain; both are already handled (Residential+AR proxy, `impit`'s own TLS chain validation) so you don't debug `ConnectTimeoutError`s or certificate failures yourself.
 - **The stateful postback flow is already solved.** This portal's pagination is a ViewState/EventValidation ASP.NET grid, not a paged URL — replicating that form state correctly, including the sliding pager window, is exactly the kind of brittle, easy-to-get-subtly-wrong logic this actor absorbs.
 - **Built-in delta detection.** Change tracking (new / status-changed / amended / closed) is maintained for you in a persisted key-value store between runs — you get a diff, not a list to diff yourself.
 
