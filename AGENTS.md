@@ -143,6 +143,88 @@ assuming anything about missing roots or client library bugs - a
 Windows/macOS dev machine's OS-level cert store can silently paper over a
 server sending an incomplete chain in a way Linux containers won't.
 
+## HTTP transport: `impit` (2026-09-19)
+
+Migrated `src/fetchTenders.ts` from `https.request()` + `https-proxy-agent`
+(see "Real bug #6" above for why that pairing existed) to `impit`, as part
+of a fleet-wide TLS/JA3 fingerprint-hardening pass. This actor was
+deliberately held out of the first batch of that pass because it has two
+real, load-bearing quirks the migration could plausibly have broken
+silently: the Residential+AR proxy fallback and the
+`NODE_EXTRA_CA_CERTS`/`certs/cordoba-sectigo-chain.pem` TLS workaround for
+the source's own incomplete certificate chain (both from Real bug #6).
+
+**The core risk did not materialize - live-verified before trusting it.**
+`impit` ships its own Rust-based TLS stack, entirely independent of Node's
+OpenSSL bindings, so there was no reason to assume `NODE_EXTRA_CA_CERTS` (a
+Node-specific, additive trust-store env var) would do anything for it.
+Checked the installed `impit@0.14.5` package's own `index.d.ts` before
+writing any code: `ImpitOptions` has no custom/extra-CA option at all - the
+only TLS-related knob is `ignoreTlsErrors`, a blanket "accept any
+certificate" toggle, not an additive one like `NODE_EXTRA_CA_CERTS`. Rather
+than guess, tested directly against the real, unproxied `BASE_URL` with
+impit's plain defaults (`browser: 'chrome'`, `ignoreTlsErrors` unset): **200
+OK, full `#gv` grid present, chain validated with no error** - no
+workaround needed. `npm test`'s existing live suite (`test/fetchTenders.test.ts`,
+unmodified, still `skipIf(process.env.CI)`) then walked the real multi-page
+postback/cookie/ViewState chain end-to-end through the new impit-based
+`fetchTenders()` and passed all 3 cases unchanged (52/52 tests total, same
+as the pre-migration baseline checked via `git stash`/`git stash pop` -
+no meaningful timing regression in actual request time, only a one-time
+`impit` native-module import cost). `ignoreTlsErrors` was deliberately left
+unset: there is no evidence it's needed, and setting it anyway would trade
+the specific, `openssl verify`-confirmed chain fix for a strictly weaker
+"trust anything" posture with no offsetting benefit.
+
+**One gap could not be closed locally: `impit` + Apify's Residential+AR
+proxy, from the real Linux actor container, was not independently
+live-verified.** Two blockers, both platform/tooling limits rather than a
+site-specific finding:
+
+1. This Apify account's "Proxy external access" is not enabled -
+   `Actor.createProxyConfiguration({...}).newUrl()` returns `null` with
+   that exact warning when called from a local script/CLI context outside
+   an actual platform run, so a real Residential+AR proxy URL could not be
+   obtained locally to test with (confirmed live, 2026-09-19).
+2. No Docker/Linux container was available on this dev machine to
+   otherwise replicate the actor's real cloud runtime - relevant
+   specifically because Real bug #6 already showed this exact site's TLS
+   behavior can differ between a Windows dev machine and the Linux actor
+   container (Windows silently completing an incomplete chain in a way the
+   container does not).
+
+This matters less than it might for a typical actor because a forwarding
+HTTP `CONNECT` proxy tunnels raw TLS bytes without participating in the
+handshake - the certificate chain impit validates is identical whether the
+TCP path runs directly or through the proxy, so the direct test above is
+still meaningful evidence for the CA-chain question specifically. It does
+**not** cover whether impit's `proxyUrl` option (documented to support
+HTTP/HTTPS/SOCKS4/SOCKS5; Apify Proxy is HTTP) correctly authenticates and
+tunnels through Apify's specific proxy implementation in practice, or
+whether impit's TLS validation genuinely behaves the same on the Linux
+container as it did here on Windows. `src/fetchTenders.ts` wires the proxy
+in via `new Impit({ browser: 'chrome', proxyUrl })`, constructed fresh
+per-call (not a module-level singleton - proxyUrl is a per-run value
+threaded in from `main.ts`'s existing `Actor.createProxyConfiguration().newUrl()`
+call, unchanged from before, and impit's proxy is fixed at construction
+time, not settable per-request).
+
+**Watch the first real scheduled run after this ships closely** rather
+than treating this as fully closed. If it fails, the fix is either
+reverting `src/fetchTenders.ts` to the `https-proxy-agent` version (this
+commit's parent), or investigating impit's proxy+TLS interaction
+specifically - the CA-chain question is already answered and is not the
+suspect if a real-run failure occurs.
+
+Also changed: `extractSessionCookie` now reads the response via
+`Headers.getSetCookie()` instead of a raw Node header value - the correct,
+spec-compliant way to read a `Set-Cookie` header when more than one might
+be present (this site sends exactly one `ASP.NET_SessionId` cookie per
+response, live-verified, so this was not a behavior-changing risk here,
+just a more correct implementation of the same job the old regex-based
+extraction already did). `https-proxy-agent` dependency removed
+(no longer used anywhere in this repo).
+
 ## Delta engine v2 (2026-09-08)
 
 Supersedes the "record_id and event_type choices" bullet in the retrofit
