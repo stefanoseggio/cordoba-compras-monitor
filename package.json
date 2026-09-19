@@ -1,6 +1,6 @@
 {
     "name": "cordoba-compras-monitor",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "type": "module",
     "description": "Cordoba Compras Publicas Monitor: extracts active public tenders (licitaciones) from the Province of Cordoba, Argentina's official procurement portal, with organism, dates, status and reference budget.",
     "engines": {
