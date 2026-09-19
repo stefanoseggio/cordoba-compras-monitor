@@ -61,3 +61,16 @@ export function parseGrid($: CheerioAPI): TenderRow[] {
 
     return rows;
 }
+
+// A 0-row parseGrid() result is ambiguous on its own: Cordoba's real "genuinely 0 active
+// tenders" case still renders #gv with just its header row (see
+// test/fixtures/page_no_results.html, a hand-built fixture encoding the exact shape observed
+// live), so #gv being MISSING ENTIRELY - a bot-check interstitial, a session-expired
+// redirect, or an unrelated site-structure change, all of which can still come back HTTP 200 -
+// is a structurally distinct and far more suspicious signal than "0 data rows" and must not be
+// conflated with it. src/fetchTenders.ts uses this, separately from parseGrid()'s row count, to
+// decide whether a 0-row result is trustworthy enough to feed into CLOSED detection (see
+// src/deltaEngine.ts's isSuspectedFetchFailure and AGENTS.md).
+export function hasResultsGrid($: CheerioAPI): boolean {
+    return $('#gv').length > 0;
+}

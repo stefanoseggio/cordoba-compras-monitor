@@ -1,6 +1,6 @@
 import { Actor, log } from 'apify';
 
-import { buildTenderRecords, findClosed } from './deltaEngine.js';
+import { buildTenderRecords, findClosed, isSuspectedFetchFailure } from './deltaEngine.js';
 import { BASE_URL, fetchTenders } from './fetchTenders.js';
 import { loadState, mergeEntries, saveState } from './state.js';
 import type { ActorInput } from './types.js';
@@ -29,10 +29,12 @@ async function run(): Promise<void> {
 
     let tenders;
     let truncatedByMaxItems;
+    let gridPresent;
     try {
         const result = await fetchTenders(maxItems, proxyUrl);
         tenders = result.tenders;
         truncatedByMaxItems = result.truncatedByMaxItems;
+        gridPresent = result.gridPresent;
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const cause = error instanceof Error && error.cause ? String(error.cause) : null;
@@ -60,16 +62,29 @@ async function run(): Promise<void> {
         sourceUrl: BASE_URL,
     });
 
-    // CLOSED is only safe to compute against a COMPLETE walk (see AGENTS.md "Delta engine v2",
-    // and entrerios-compras-monitor's AGENTS.md for the closely related bug this mirrors on a
-    // different axis: there it was an applied filter making the fetch a subset, here it is
-    // maxItems truncation - both mean "this fetch did not see everything", which is the one
-    // precondition CLOSED absolutely needs).
+    // CLOSED is only safe to compute against a COMPLETE, TRUSTWORTHY walk (see AGENTS.md "Delta
+    // engine v2", and entrerios-compras-monitor's AGENTS.md for the closely related bug this
+    // mirrors on a different axis: there it was an applied filter making the fetch a subset,
+    // here it is maxItems truncation - both mean "this fetch did not see everything", which is
+    // one precondition CLOSED absolutely needs). isSuspectedFetchFailure guards the OTHER
+    // precondition: a 0-row result is only trustworthy when the #gv grid actually rendered -
+    // otherwise a bot-check page, a session-expired redirect, or a site-structure change would
+    // be indistinguishable from "every tender genuinely closed" and would wipe the entire delta
+    // state on a false positive (see src/deltaEngine.ts's isSuspectedFetchFailure doc comment).
     const fetchedIds = new Set(tenders.map((t) => t.nroCotizacion));
     const closedAllowed = !eventTypes || eventTypes.includes('CLOSED');
-    const closed = truncatedByMaxItems || !closedAllowed ? [] : findClosed(state, fetchedIds, scrapedAt, BASE_URL);
+    const suspectedFetchFailure = isSuspectedFetchFailure(tenders.length, gridPresent);
+    const closed =
+        truncatedByMaxItems || !closedAllowed || suspectedFetchFailure
+            ? []
+            : findClosed(state, fetchedIds, scrapedAt, BASE_URL);
     if (truncatedByMaxItems && Object.keys(state.entries).length > 0) {
         log.info('Skipping CLOSED detection this run: the walk was truncated by maxItems, so it is not a complete census.');
+    }
+    if (suspectedFetchFailure && Object.keys(state.entries).length > 0) {
+        log.error(
+            `Skipping CLOSED detection this run: obtuvimos 0 licitaciones y la grilla #gv no estaba presente en la respuesta - esto parece un bot-check, una sesion expirada o un cambio estructural del sitio, no un dia real sin licitaciones activas. Se preservan sin cambios las ${Object.keys(state.entries).length} licitaciones ya rastreadas para que una proxima corrida valida pueda detectar un cierre real.`,
+        );
     }
     const allRecords = [...records, ...closed];
 

@@ -79,11 +79,35 @@ export function buildTenderRecords(rows: TenderRow[], options: BuildRecordsOptio
 }
 
 /**
+ * A 0-row fetch is ambiguous on its own: from state alone, "every previously-tracked tender
+ * genuinely closed today" and "the fetch technically succeeded (HTTP 200) but returned a
+ * bot-check page, a session-expired redirect, or an empty shell from a site-structure change"
+ * look identical - both hand findClosed a fetchedIds set that's empty (or missing whatever the
+ * garbage response failed to include), which findClosed would then correctly-per-its-own-logic,
+ * but WRONGLY overall, report as a mass closure. gridPresent (see src/fetchTenders.ts,
+ * src/parsers/table.ts's hasResultsGrid) is the one signal that tells the two apart: Cordoba's
+ * real "genuinely 0 active tenders" case still renders the #gv results grid with just its
+ * header row (see test/fixtures/page_no_results.html), so #gv being missing entirely alongside
+ * 0 rows is the specific, narrow condition that means "don't trust this result", not "0 data
+ * rows" by itself.
+ *
+ * Gates the caller (src/main.ts): when this returns true, findClosed must not be invoked at
+ * all this run, and every previously-tracked id must be left exactly as it was (mergeEntries
+ * already keeps any id not re-observed this run, so simply skipping findClosed is sufficient -
+ * no separate "restore" step is needed) so a future good run can still detect a real closure
+ * instead of it being permanently and silently lost the moment one bad fetch wipes the state.
+ */
+export function isSuspectedFetchFailure(fetchedCount: number, gridPresent: boolean): boolean {
+    return fetchedCount === 0 && !gridPresent;
+}
+
+/**
  * A previously-seen nroCotizacion absent from THIS run's fetch has left the active listing.
  * Unlike a paginated source that early-stops, this is only trustworthy when the walk was
- * COMPLETE (fetchTenders was not truncated by maxItems, see src/fetchTenders.ts) - a partial
- * walk proves nothing about ids past where it stopped. Gated by the caller (src/main.ts), not
- * here, so this function stays a pure, directly-testable transformation.
+ * COMPLETE (fetchTenders was not truncated by maxItems, see src/fetchTenders.ts) and TRUSTWORTHY
+ * (see isSuspectedFetchFailure above) - a partial or malformed walk proves nothing about ids past
+ * where it stopped, or missing from a response that never really rendered. Gated by the caller
+ * (src/main.ts), not here, so this function stays a pure, directly-testable transformation.
  */
 export function findClosed(state: DeltaState, fetchedIds: ReadonlySet<string>, scrapedAt: string, sourceUrl: string): TenderRecord[] {
     const closed: TenderRecord[] = [];
