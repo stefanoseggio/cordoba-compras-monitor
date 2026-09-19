@@ -281,7 +281,7 @@ One real record from this Actor's own dataset, matching `.actor/dataset_schema.j
 | `jurisdiccion` | The government jurisdiction the tender falls under |
 | `fechaInicio` / `fechaFinalizacion` | Publication and closing/opening date and time |
 | `estado` | Current status (e.g. "Publicada", "En Proceso") |
-| `prorroga` | Whether the deadline has been extended |
+| `prorroga` | Whether the deadline has been extended. On a `CLOSED` record this is the tender's real last-observed value, not a fresh read; `null` means that value wasn't available (an older, pre-upgrade tracked entry) — never read `null` as "not extended" |
 | `items[].renglon` / `cantidad` / `precioReferencia` / `presupuestoOficial` | Line items with quantity, reference price and official budget, extracted inline from the listing fetch — no extra request needed |
 | `telefonoContacto` | Contact phone number published with the tender |
 | `event_type` | `NEW_LISTING`, `STATUS_CHANGE`, `UPDATED`, or `CLOSED` in delta mode (`onlyNew: true`); `UNCHANGED` is also possible on a full run (`onlyNew: false`), where every active tender is returned rather than just what changed |
@@ -296,6 +296,7 @@ One real record from this Actor's own dataset, matching `.actor/dataset_schema.j
 - **TLS chain fixed explicitly.** The source's server sends only its leaf certificate, not the required intermediate; the actor supplies the missing intermediate/root via `NODE_EXTRA_CA_CERTS`, additively extending Node's trust store.
 - **Delta state persisted safely.** A tender is only marked "seen" once it is actually pushed to the dataset this run, so one held back by `maxItems` stays correctly eligible for detection next run rather than silently dropping out of tracking.
 - **`CLOSED` is only ever reported against a complete walk.** A run truncated by `maxItems` skips (and logs) closure detection rather than guessing that a missing tender has closed.
+- **`CLOSED` records carry real last-known field values, not blanks.** The source has no per-tender page to re-fetch once a tender has left the active list, so `servicioAdministrativo`, `fechaInicio`, `fechaFinalizacion`, `prorroga`, `items` and `telefonoContacto` on a `CLOSED` record are the tender's actual values as of its last observation (persisted alongside `estado` in the delta state), never fabricated empty/`false` placeholders. `prorroga` is `null` only for a tender tracked before this field existed.
 - **Deduplicates against live inserts.** New tenders can be published mid-walk, shifting later rows into duplicate positions across consecutive page fetches; every walked row is deduplicated by `nroCotizacion` so a mid-run insert can't produce duplicate dataset records.
 - **Change detection uses a real SHA-1 content fingerprint** (`src/fingerprint.ts`), computed over the tender's stable fields, and compared against the last-seen `estado` and hash stored per `nroCotizacion` in a named key-value store that survives between scheduled runs.
 

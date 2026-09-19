@@ -4,7 +4,18 @@ import { mergeEntries } from '../src/state.js';
 import type { SeenEntry } from '../src/state.js';
 
 function entry(estado: string, hash = 'h'): SeenEntry {
-    return { estado, hash, tipoContratacion: 'tc', jurisdiccion: 'j' };
+    return {
+        estado,
+        hash,
+        tipoContratacion: 'tc',
+        servicioAdministrativo: 'sa',
+        jurisdiccion: 'j',
+        fechaInicio: '01/01/2026',
+        fechaFinalizacion: '02/01/2026',
+        prorroga: false,
+        items: [],
+        telefonoContacto: null,
+    };
 }
 
 describe('mergeEntries', () => {

@@ -54,7 +54,18 @@ export function buildTenderRecords(rows: TenderRow[], options: BuildRecordsOptio
         const isNew = !previous;
         observedThisRun.push({
             id: row.nroCotizacion,
-            entry: { estado: row.estado, hash, tipoContratacion: row.tipoContratacion, jurisdiccion: row.jurisdiccion },
+            entry: {
+                estado: row.estado,
+                hash,
+                tipoContratacion: row.tipoContratacion,
+                servicioAdministrativo: row.servicioAdministrativo,
+                jurisdiccion: row.jurisdiccion,
+                fechaInicio: row.fechaInicio,
+                fechaFinalizacion: row.fechaFinalizacion,
+                prorroga: row.prorroga,
+                items: row.items,
+                telefonoContacto: row.telefonoContacto,
+            },
         });
 
         if (onlyNew && eventType === 'UNCHANGED') continue;
@@ -108,6 +119,15 @@ export function isSuspectedFetchFailure(fetchedCount: number, gridPresent: boole
  * (see isSuspectedFetchFailure above) - a partial or malformed walk proves nothing about ids past
  * where it stopped, or missing from a response that never really rendered. Gated by the caller
  * (src/main.ts), not here, so this function stays a pure, directly-testable transformation.
+ *
+ * The source has no per-tender page to re-fetch once a tender has left the active list, so a
+ * CLOSED record's non-identity fields (servicioAdministrativo, fechaInicio, fechaFinalizacion,
+ * prorroga, items, telefonoContacto) are populated from the tender's last-known SeenEntry rather
+ * than fabricated. prorroga in particular must never be defaulted to false here - a CLOSED
+ * tender's last-observed prorroga may have genuinely been true (an active extension), and
+ * reporting false would be an affirmative, actively wrong claim, not a harmless placeholder. When
+ * an older, pre-fix SeenEntry lacks it (persisted before this field existed), it stays
+ * null/undefined to mean "unknown at closure" rather than a fabricated non-extension.
  */
 export function findClosed(state: DeltaState, fetchedIds: ReadonlySet<string>, scrapedAt: string, sourceUrl: string): TenderRecord[] {
     const closed: TenderRecord[] = [];
@@ -116,14 +136,14 @@ export function findClosed(state: DeltaState, fetchedIds: ReadonlySet<string>, s
         closed.push({
             nroCotizacion: recordId,
             tipoContratacion: entry.tipoContratacion,
-            servicioAdministrativo: '',
+            servicioAdministrativo: entry.servicioAdministrativo ?? '',
             jurisdiccion: entry.jurisdiccion,
-            fechaInicio: '',
-            fechaFinalizacion: '',
+            fechaInicio: entry.fechaInicio ?? '',
+            fechaFinalizacion: entry.fechaFinalizacion ?? '',
             estado: entry.estado,
-            prorroga: false,
-            items: [],
-            telefonoContacto: null,
+            prorroga: entry.prorroga ?? null,
+            items: entry.items ?? [],
+            telefonoContacto: entry.telefonoContacto ?? null,
             record_id: recordId,
             event_type: 'CLOSED',
             previousEstado: null,

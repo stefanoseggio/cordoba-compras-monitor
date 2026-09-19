@@ -1,5 +1,7 @@
 import { Actor } from 'apify';
 
+import type { TenderItem } from './types.js';
+
 // A NAMED key-value store (not the run's default one, which is isolated per
 // run and would not survive between scheduled runs) - this is what makes
 // "only new since last run" possible at all across a schedule. Only one
@@ -11,15 +13,26 @@ const MAX_SEEN_IDS = 5000;
 
 /** v2: last-known estado + content fingerprint per id, not just a bare seen flag - this is
  *  what makes STATUS_CHANGE and UPDATED possible. Both fields come from the already-walked
- *  listing row, at zero extra request cost. tipoContratacion/jurisdiccion are kept too, so a
- *  CLOSED record (see src/deltaEngine.ts) - reported when a previously-active tender is no
- *  longer in the listing - can still say what it was, since the source has no per-tender page
- *  to look it up on once it has left the active list. */
+ *  listing row, at zero extra request cost. Every other TenderRow field (tipoContratacion,
+ *  servicioAdministrativo, jurisdiccion, fechaInicio, fechaFinalizacion, prorroga, items,
+ *  telefonoContacto) is carried forward too, so a CLOSED record (see src/deltaEngine.ts) -
+ *  reported when a previously-active tender is no longer in the listing - can report its real
+ *  last-known values instead of fabricated blanks/false, since the source has no per-tender page
+ *  to look it up on once it has left the active list. All of these are already parsed on every
+ *  walked row (fingerprint.ts hashes the same set), so carrying them forward is free. */
 export interface SeenEntry {
     estado: string;
     hash: string;
     tipoContratacion: string;
+    servicioAdministrativo: string;
     jurisdiccion: string;
+    fechaInicio: string;
+    fechaFinalizacion: string;
+    /** null/undefined means "unknown at closure" - never fabricate a false extension status for
+     *  a tender that left the listing without us having last-observed its real prorroga value. */
+    prorroga: boolean | null;
+    items: TenderItem[];
+    telefonoContacto: string | null;
 }
 
 export interface DeltaState {

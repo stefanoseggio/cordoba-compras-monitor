@@ -26,8 +26,8 @@
             "estado": { "title": "Estado", "type": "string" },
             "prorroga": {
                 "title": "Prorroga",
-                "type": "boolean",
-                "description": "Whether the deadline has been extended"
+                "type": ["boolean", "null"],
+                "description": "Whether the deadline has been extended. On a CLOSED record this is the tender's real last-observed value, not a fresh read; null means that value was not available (an older, pre-upgrade tracked entry) - never assume null/false-looking absence means 'not extended'."
             },
             "items": {
                 "title": "Items",

@@ -47,7 +47,7 @@ export interface TenderRow {
 
 // The standardized B2B integration envelope shared across this portfolio's
 // fleet, layered on top of the raw domain fields above.
-export interface TenderRecord extends TenderRow {
+export interface TenderRecord extends Omit<TenderRow, 'prorroga'> {
     record_id: string;
     event_type: EventType;
     /** Set only for event_type=STATUS_CHANGE: the estado this record_id was last seen under. */
@@ -57,6 +57,14 @@ export interface TenderRecord extends TenderRow {
     source_url: string;
     /** sha1 content fingerprint as of this run - see src/fingerprint.ts. */
     contentHash: string;
+    /**
+     * boolean on every freshly-fetched row (NEW_LISTING/STATUS_CHANGE/UPDATED/UNCHANGED).
+     * On a CLOSED record (see src/deltaEngine.ts's findClosed) this is the tender's real
+     * last-observed value carried forward from its SeenEntry - null only when an older,
+     * pre-upgrade persisted state entry never recorded it, meaning "unknown at closure", never
+     * a fabricated/affirmative false claiming the tender was confirmed not extended.
+     */
+    prorroga: boolean | null;
 }
 
 export type FormFields = Record<string, string>;
