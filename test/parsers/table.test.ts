@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import * as cheerio from 'cheerio';
 import { describe, expect, it } from 'vitest';
 
-import { parseGrid } from '../../src/parsers/table.js';
+import { hasResultsGrid, parseGrid } from '../../src/parsers/table.js';
 
 const fixturesDir = fileURLToPath(new URL('../fixtures', import.meta.url));
 
@@ -63,5 +63,23 @@ describe('parseGrid', () => {
         for (const row of rows) {
             expect(row.nroCotizacion).toMatch(/^\d{4}\/\d+$/);
         }
+    });
+});
+
+describe('hasResultsGrid', () => {
+    it('is true on a normal page with data rows', () => {
+        expect(hasResultsGrid(loadFixture('page1.html'))).toBe(true);
+    });
+
+    it('is true on a genuine 0-tender day - #gv is present with just its header row', () => {
+        const $ = loadFixture('page_no_results.html');
+        expect(parseGrid($)).toHaveLength(0); // same 0-row outcome as the bot-check case below...
+        expect(hasResultsGrid($)).toBe(true); // ...but #gv itself is what tells them apart
+    });
+
+    it('is false when the response has no #gv grid at all (bot-check/session-expired/site-structure-change page)', () => {
+        const $ = loadFixture('page_bot_check.html');
+        expect(parseGrid($)).toHaveLength(0); // parseGrid() alone can't distinguish this from the case above
+        expect(hasResultsGrid($)).toBe(false);
     });
 });

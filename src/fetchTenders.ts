@@ -7,7 +7,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 
 import { buildPostbackPayload } from './parsers/form.js';
 import { getCurrentPage, hasNextBlockLink, hasPageLink } from './parsers/pagination.js';
-import { parseGrid } from './parsers/table.js';
+import { hasResultsGrid, parseGrid } from './parsers/table.js';
 import type { TenderRow } from './types.js';
 
 // Exported for the delta layer's `source_url` envelope field - this portal
@@ -133,6 +133,16 @@ export interface FetchTendersResult {
      * "no longer active" (CLOSED) for a previously-seen id absent from this walk.
      */
     truncatedByMaxItems: boolean;
+    /**
+     * False when the initial response never contained the #gv results grid at all - not merely
+     * 0 data rows within it (a genuine 0-tender day still renders the grid with its header row,
+     * see test/fixtures/page_no_results.html). A bot-check interstitial, a session-expired
+     * redirect, or a site-structure change can all return HTTP 200 with no #gv anywhere, which
+     * parseGrid() alone reports identically to a real empty result (both are "0 rows"). Used by
+     * src/main.ts (via src/deltaEngine.ts's isSuspectedFetchFailure) to refuse to treat a
+     * grid-less 0-row result as proof every previously-tracked tender closed - see AGENTS.md.
+     */
+    gridPresent: boolean;
 }
 
 export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise<FetchTendersResult> {
@@ -169,6 +179,16 @@ export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise
     let $: CheerioAPI = cheerio.load(html);
 
     const firstPageRows = parseGrid($);
+    const gridPresent = hasResultsGrid($);
+    if (!gridPresent) {
+        // Deliberately NOT thrown from here - fetchTenders stays a pure "walk and report what
+        // you saw" function (same contract as truncatedByMaxItems above); it's the caller
+        // (src/main.ts, via isSuspectedFetchFailure) that decides this is unsafe to feed into
+        // CLOSED detection. See the gridPresent field's own doc comment above.
+        log.warning(
+            'La grilla de resultados (#gv) no esta presente en la respuesta inicial - posible bot-check, sesion expirada, redireccion o cambio estructural del sitio, no necesariamente 0 licitaciones reales.',
+        );
+    }
     pushUnique(firstPageRows);
     log.info(`Pagina 1: ${firstPageRows.length} licitaciones`);
 
@@ -228,5 +248,5 @@ export async function fetchTenders(maxItems: number, proxyUrl?: string): Promise
         currentPage = newPage;
     }
 
-    return { tenders: results, truncatedByMaxItems: results.length >= maxItems };
+    return { tenders: results, truncatedByMaxItems: results.length >= maxItems, gridPresent };
 }

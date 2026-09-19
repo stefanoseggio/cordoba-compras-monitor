@@ -5,7 +5,7 @@ import * as cheerio from 'cheerio';
 import { describe, expect, it } from 'vitest';
 
 import { parseFechaInicio } from '../src/dateFilter.js';
-import { buildTenderRecords, findClosed } from '../src/deltaEngine.js';
+import { buildTenderRecords, findClosed, isSuspectedFetchFailure } from '../src/deltaEngine.js';
 import { fingerprintOf } from '../src/fingerprint.js';
 import { parseGrid } from '../src/parsers/table.js';
 import type { DeltaState, SeenEntry } from '../src/state.js';
@@ -193,5 +193,58 @@ describe('findClosed', () => {
     it('reports nothing closed when every previously-seen id is still present', () => {
         const state = stateWith({ a: { estado: 'EN PROCESO', hash: 'h', tipoContratacion: 't', jurisdiccion: 'j' } });
         expect(findClosed(state, new Set(['a']), SCRAPED_AT, SOURCE_URL)).toHaveLength(0);
+    });
+});
+
+// Bug: a 0-row fetch (page returns HTTP 200 but the #gv results grid never rendered - a
+// bot-check interstitial, a session-expired redirect, or a site-structure change) was
+// indistinguishable, from fetchedIds alone, from "every previously-tracked tender genuinely
+// closed" - findClosed would report every single tracked id as CLOSED, and src/main.ts would
+// then delete every one of them from the persisted delta state, permanently losing them. See
+// src/deltaEngine.ts's isSuspectedFetchFailure doc comment and src/fetchTenders.ts's
+// gridPresent field.
+describe('isSuspectedFetchFailure', () => {
+    it('flags a 0-row result with no #gv grid present as a suspected failure, not a real mass closure', () => {
+        expect(isSuspectedFetchFailure(0, false)).toBe(true);
+    });
+
+    it('does NOT flag a genuine 0-tender day - #gv present, legitimately zero data rows', () => {
+        expect(isSuspectedFetchFailure(0, true)).toBe(false);
+    });
+
+    it('does NOT flag a normal run that actually fetched rows', () => {
+        expect(isSuspectedFetchFailure(25, true)).toBe(false);
+    });
+
+    it('THE BUG, reproduced end to end: a large previously-tracked state plus a malformed/empty fetch must NOT be reported as a mass closure', () => {
+        // A realistic prior state: many tenders tracked from a healthy previous run.
+        const entries: Record<string, SeenEntry> = {};
+        for (const id of allIds) entries[id] = { estado: 'EN PROCESO', hash: 'h', tipoContratacion: 't', jurisdiccion: 'j' };
+        const state = stateWith(entries);
+
+        // Simulates fetchTenders() coming back from a bot-check/session-expired/structurally
+        // changed response: 0 tenders parsed, #gv never present.
+        const fetchedIds = new Set<string>();
+        const gridPresent = false;
+
+        // Without the guard, findClosed alone has no way to know this wasn't a real mass
+        // closure - it would report every single tracked tender as CLOSED:
+        expect(findClosed(state, fetchedIds, SCRAPED_AT, SOURCE_URL)).toHaveLength(allIds.length);
+
+        // The guard is what src/main.ts checks BEFORE ever calling findClosed - this must be
+        // true so the caller skips findClosed entirely and leaves the state untouched this run.
+        expect(isSuspectedFetchFailure(fetchedIds.size, gridPresent)).toBe(true);
+    });
+
+    it('a REAL mass closure (grid present, genuinely 0 active tenders left) is still correctly detected - the guard must not suppress legitimate behavior', () => {
+        const entries: Record<string, SeenEntry> = {};
+        for (const id of allIds) entries[id] = { estado: 'EN PROCESO', hash: 'h', tipoContratacion: 't', jurisdiccion: 'j' };
+        const state = stateWith(entries);
+
+        const fetchedIds = new Set<string>(); // genuinely nothing active today
+        const gridPresent = true; // but the source's own #gv grid rendered normally, just empty
+
+        expect(isSuspectedFetchFailure(fetchedIds.size, gridPresent)).toBe(false);
+        expect(findClosed(state, fetchedIds, SCRAPED_AT, SOURCE_URL)).toHaveLength(allIds.length);
     });
 });
