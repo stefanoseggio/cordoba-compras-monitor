@@ -9,7 +9,7 @@
     "dependencies": {
         "apify": "^3.7.0",
         "cheerio": "1.2.0",
-        "impit": "^0.14.6"
+        "impit": "^0.14.7"
     },
     "devDependencies": {
         "@apify/eslint-config": "^2.0.0",
